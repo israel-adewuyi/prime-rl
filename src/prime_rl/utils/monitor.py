@@ -15,7 +15,7 @@ import aiohttp
 import pandas as pd
 import psutil
 import pynvml
-import wandb
+import trackio as wandb
 from transformers.tokenization_utils import PreTrainedTokenizer
 
 from prime_rl.utils.config import (
@@ -141,11 +141,8 @@ class WandbMonitor(Monitor):
         self.wandb = wandb.init(
             project=config.project,
             name=config.name,
-            id=config.id,
-            dir=output_dir,
             resume="allow",
             config=run_config.model_dump() if run_config else None,
-            mode="offline" if config.offline else None,
         )
 
         # Optionally, initialize sample logging attributes
