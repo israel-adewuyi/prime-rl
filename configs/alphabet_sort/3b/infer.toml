@@ -1,5 +1,5 @@
 [model]
-name = "Qwen/Qwen2.5-3B-Instruct"
+name = "Qwen/Qwen3-0.6B"
 
-[parallel]
-dp = 6
+max_model_len = 2048
+
