@@ -4,7 +4,7 @@ max_steps = 500
 project = "alphabet-sort"
 
 [model]
-name = "Qwen/Qwen3-0.6B"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [optim]
 lr = 1e-6

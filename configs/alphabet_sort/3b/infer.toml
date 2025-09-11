@@ -1,5 +1,5 @@
 [model]
-name = "Qwen/Qwen3-0.6B"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 max_model_len = 2048
 

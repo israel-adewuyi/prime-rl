@@ -6,7 +6,7 @@ rollouts_per_example = 16
 mask_truncated_completions = false
 
 [model]
-name = "Qwen/Qwen3-0.6B"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [monitor.wandb]
 project = "alphabet-sort"
