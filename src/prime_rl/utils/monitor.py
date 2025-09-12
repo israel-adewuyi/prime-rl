@@ -133,6 +133,7 @@ class WandbMonitor(Monitor):
         super().__init__(config, task_id)
         rank = int(os.environ.get("LOCAL_RANK", os.environ.get("DP_RANK", "0")))
         self.config = config
+        self.output_dir = output_dir
         self.is_master = rank == 0
         if not self.is_master:
             self.logger.warning(f"Skipping WandbMonitor initialization from non-master rank ({rank})")
@@ -186,69 +187,89 @@ class WandbMonitor(Monitor):
     def log(self, metrics: dict[str, Any]) -> None:
         if not self.is_master:
             return
-        wandb.log(metrics, step=metrics.get("step", None))
+        wandb.log(metrics)
 
-    def log_samples(
-        self,
-        input_tokens: list[list[int]],
-        output_tokens: list[list[int]],
-        rewards: list[float],
-        advantages: list[float],
-        rollouts_per_problem: int,
-        step: int,
-    ) -> None:
-        """Log prompt/response samples to W&B table.
-
+    def _select_problem_samples(
+        self, 
+        input_tokens: list[list[int]], 
+        output_tokens: list[list[int]], 
+        rollouts_per_problem: int
+    ) -> dict[str, int]:
+        """Select representative problem samples (min, max, random length).
+        
         Args:
             input_tokens: List of input token sequences
-            output_tokens: List of output token sequences
-            rewards: List of rewards for each sample
-            task_rewards: Optional list of task-specific rewards
-            step: Current training step
+            output_tokens: List of output token sequences  
+            rollouts_per_problem: Number of rollouts per problem
+            
+        Returns:
+            Dictionary mapping sample tags to problem IDs
         """
-        if not self.is_master:
-            return
-        if (
-            not self.config.log_extras
-            or not self.config.log_extras.samples
-            or step % self.config.log_extras.interval != 0
-        ):
-            # Do not log samples if not enabled or not log interval step
-            return
-        assert self.tokenizer is not None, "Tokenizer is required for sample logging"
-        assert self.last_log_samples_step <= step, "Step must be greater than last logged step"
-        assert self.logger is not None, "Logger is required for sample logging"
-        self.logger.info(f"Logging samples to W&B table at step {step}")
-        start_time = time.time()
         batch_size = len(input_tokens)
         num_problems = batch_size // rollouts_per_problem
-
+        
         # Compute per-problem statistics
         per_problem_tokens = defaultdict(list)
-        tokens = [input_tokens[i] + output_tokens[i] for i in range(batch_size)]
-        for i, t in enumerate(tokens):
+        token_sequences = [input_tokens[i] + output_tokens[i] for i in range(batch_size)]
+        
+        for i, token_sequence in enumerate(token_sequences):
             problem_id = i // rollouts_per_problem
-            per_problem_tokens[problem_id].append(t)
+            per_problem_tokens[problem_id].append(token_sequence)
+            
         assert len(per_problem_tokens) == num_problems
         assert list(per_problem_tokens.keys()) == list(range(num_problems))
 
+        # Calculate average sequence length per problem
         per_problem_seq_len = {
-            problem_id: sum(len(t) for t in tokens) / len(tokens) for problem_id, tokens in per_problem_tokens.items()
+            problem_id: sum(len(token_sequence) for token_sequence in tokens) / len(tokens) 
+            for problem_id, tokens in per_problem_tokens.items()
         }
-        self.logger.debug(f"Per-problem seq len: {per_problem_seq_len}")
-        min_len_problem_id = min(per_problem_seq_len.items(), key=lambda kv: kv[1])[0]
-        max_len_problem_id = max(per_problem_seq_len.items(), key=lambda kv: kv[1])[0]
+        
+        self.logger.debug(f"Per-problem sequence lengths: {per_problem_seq_len}")
+        
+        # Select representative problems
+        min_len_problem_id = min(per_problem_seq_len.items(), key=lambda problem_id_and_length: problem_id_and_length[1])[0]
+        max_len_problem_id = max(per_problem_seq_len.items(), key=lambda problem_id_and_length: problem_id_and_length[1])[0]
         random_problem_id = random.choice(list(range(num_problems)))
+        
         problem_ids = {
             "min_len": min_len_problem_id,
             "max_len": max_len_problem_id,
             "random": random_problem_id,
         }
-        self.logger.debug(f"Logging samples for problems: {problem_ids}")
+        
+        self.logger.debug(f"Selected problem samples: {problem_ids}")
+        return problem_ids
 
-        # Randomly select and log samples
+    def _create_sample_data(
+        self,
+        input_tokens: list[list[int]],
+        output_tokens: list[list[int]], 
+        rewards: list[float],
+        advantages: list[float],
+        problem_ids: dict[str, int],
+        rollouts_per_problem: int,
+        step: int
+    ) -> list[dict[str, Any]]:
+        """Create sample data dictionaries for selected problems.
+        
+        Args:
+            input_tokens: List of input token sequences
+            output_tokens: List of output token sequences
+            rewards: List of rewards for each sample
+            advantages: List of advantages for each sample
+            problem_ids: Dictionary mapping sample tags to problem IDs
+            rollouts_per_problem: Number of rollouts per problem
+            step: Current training step
+            
+        Returns:
+            List of sample dictionaries
+        """
+        samples = []
+        
         for tag, problem_id in problem_ids.items():
             start_idx = problem_id * rollouts_per_problem
+            
             for sample_id in range(start_idx, start_idx + rollouts_per_problem):
                 sample = {
                     "step": step,
@@ -264,14 +285,110 @@ class WandbMonitor(Monitor):
                     "reward": float(rewards[sample_id]),
                     "advantage": float(advantages[sample_id]),
                 }
+                
+                # Verify column order matches expected structure
                 assert list(sample.keys()) == self.samples_cols, (
-                    "Order of columns in the table must be the same as order of the keys here"
+                    "Sample column order must match self.samples_cols"
                 )
-                self.samples_table.add_data(*sample.values())
-                self.samples.append(sample)
-        wandb.log({"samples": self.samples_table}, step=step)
-        self.last_log_samples_step = step
-        self.logger.debug(f"Logged samples at step {step} to W&B table in {time.time() - start_time:.2f}s")
+                samples.append(sample)
+                
+        return samples
+
+    def _save_samples_to_local(self, df: pd.DataFrame, step: int) -> None:
+        """Save samples DataFrame to local CSV file with append functionality.
+        
+        Args:
+            df: DataFrame containing sample data
+            step: Current training step for logging
+        """
+        if not hasattr(self, 'output_dir') or self.output_dir is None:
+            self.logger.warning("No output directory configured, skipping local sample save")
+            return
+            
+        try:
+            samples_file = self.output_dir / "samples_log.csv"
+            
+            # Create directory if it doesn't exist
+            samples_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Append to existing file or create new one
+            if samples_file.exists():
+                df.to_csv(samples_file, mode='a', header=False, index=False)
+                self.logger.debug(f"Appended {len(df)} samples to {samples_file}")
+            else:
+                df.to_csv(samples_file, mode='w', header=True, index=False)
+                self.logger.debug(f"Created new samples log file: {samples_file} with {len(df)} samples")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to save samples to local file: {e}")
+
+    def log_samples(
+        self,
+        input_tokens: list[list[int]],
+        output_tokens: list[list[int]],
+        rewards: list[float],
+        advantages: list[float],
+        rollouts_per_problem: int,
+        step: int,
+    ) -> None:
+        """Log prompt/response samples to W&B table and local file.
+
+        Args:
+            input_tokens: List of input token sequences
+            output_tokens: List of output token sequences
+            rewards: List of rewards for each sample
+            advantages: List of advantages for each sample
+            rollouts_per_problem: Number of rollouts per problem
+            step: Current training step
+        """
+        if not self.is_master:
+            return
+            
+        if (
+            not self.config.log_extras
+            or not self.config.log_extras.samples
+            or step % self.config.log_extras.interval != 0
+        ):
+            return
+            
+        # Validate required attributes
+        assert self.tokenizer is not None, "Tokenizer is required for sample logging"
+        assert self.last_log_samples_step <= step, "Step must be greater than last logged step"
+        assert self.logger is not None, "Logger is required for sample logging"
+        
+        self.logger.info(f"Logging samples at step {step}")
+        start_time = time.time()
+        
+        try:
+            # Select representative problem samples
+            problem_ids = self._select_problem_samples(
+                input_tokens, output_tokens, rollouts_per_problem
+            )
+            
+            # Create sample data
+            samples = self._create_sample_data(
+                input_tokens, output_tokens, rewards, advantages,
+                problem_ids, rollouts_per_problem, step
+            )
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(samples)
+            
+            # Log to W&B/trackio
+            wandb.log({"samples": wandb.Table(dataframe=df)})
+            
+            # Save to local file
+            self._save_samples_to_local(df, step)
+            
+            # Update tracking
+            self.last_log_samples_step = step
+            
+            elapsed_time = time.time() - start_time
+            self.logger.info(f"Successfully logged {len(samples)} samples at step {step} in {elapsed_time:.2f}s")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to log samples at step {step}: {e}")
+            raise
 
     def log_distributions(self, distributions: dict[str, list[float]], step: int) -> None:
         if not self.is_master:
@@ -299,9 +416,9 @@ class WandbMonitor(Monitor):
         # Append to distributions
         start_time = time.time()
         row = {"step": step, **distributions}
-        self.distributions.append(row)
-        self.distributions_table.add_data(*row.values())
-        wandb.log({"distributions": self.distributions_table}, step=step)
+        # self.distributions.append(row)
+        # self.distributions_table.add_data(*row.values())
+        # wandb.log({"distributions": self.distributions_table}, step=step)
         self.last_log_distributions_step = step
         self.logger.debug(f"Logged distributions at step {step} to W&B table in {time.time() - start_time:.2f}s")
 
@@ -314,7 +431,7 @@ class WandbMonitor(Monitor):
         self.logger.debug("Logging final samples to W&B table")
         df = pd.DataFrame(self.samples)
         table = wandb.Table(dataframe=df)
-        wandb.log({"final-samples": table})
+        # wandb.log({"final-samples": table})
 
     def log_final_distributions(self) -> None:
         """Log final distributions to W&B table."""
@@ -325,7 +442,7 @@ class WandbMonitor(Monitor):
         self.logger.debug("Logging final distributions to W&B table")
         df = pd.DataFrame(self.distributions)
         table = wandb.Table(dataframe=df)
-        wandb.log({"final-distributions": table})
+        # wandb.log({"final-distributions": table})
 
 
 MonitorType = Literal["file", "socket", "api", "wandb"]
