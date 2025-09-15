@@ -24,7 +24,7 @@ id = "alphabet-sort"
 
 [environment.args]
 min_turns = 2
-max_turns = 2
+max_turns = 3
 
 [sampling]
-max_tokens = 512 # OG is 512
+max_tokens = 512
