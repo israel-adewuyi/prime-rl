@@ -1,7 +1,10 @@
-max_steps = 500
+max_steps = 200
 
 [monitor.wandb]
 project = "alphabet-sort"
+space_id = "alphabet-sort"
+dataset_id = "alphabet-sort"
+name = "example_2"
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -9,5 +12,5 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 [optim]
 lr = 1e-6
 
-[ckpt]
-interval = 100
+#[ckpt]
+#interval = 100
