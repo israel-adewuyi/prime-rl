@@ -4,7 +4,7 @@ max_steps = 200
 project = "alphabet-sort"
 space_id = "alphabet-sort"
 dataset_id = "alphabet-sort"
-name = "512_sampling_len"
+name = "512_sampling_len,max_turns=3"
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
