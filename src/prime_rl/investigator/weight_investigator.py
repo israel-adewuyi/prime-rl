@@ -6,6 +6,8 @@ from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.investigator.logger import setup_logger
 
+import numpy as np
+
 class WeightInvestigator:
     """
         Weights-based interp class.
@@ -28,7 +30,11 @@ class WeightInvestigator:
     def generate_stats(self) -> None:
         tok_embeds = self.get_token_embed()
         diff_tensor = tok_embeds[0] - tok_embeds[1]
-        print(f"Difference across checkpoints is {diff_tensor.mean()}")
+        self.logger.info(f"Difference in token embedding is {diff_tensor.abs().mean()}")
+
+        for layer in range(self.model_1.config.num_hidden_layers):
+            layer_diff = self.get_attn_diff_at_layer(layer)
+            self.logger.info(f"Difference in attention at layer {layer} is {layer_diff}")
 
     def get_token_embed(self) -> Tuple[Tensor, Tensor]:
         # Get the token embedding layer 
@@ -51,8 +57,18 @@ class WeightInvestigator:
     def get_attn(self) -> Tuple[Tensor, Tensor]:
         pass
 
-    def get_attn_at_layer(self, layer: int) -> Tuple[Tensor, Tensor]:
-        pass
+    def get_attn_diff_at_layer(self, layer: int) -> Tuple[Tensor, Tensor]:
+        attn_1 = self.model_1.model.layers[layer].self_attn.state_dict()
+        attn_2 = self.model_2.model.layers[layer].self_attn.state_dict()
+
+        stats = []
+        for key in attn_1:
+            if key in attn_2:
+                diff = (attn_1[key] - attn_2[key]).abs().mean()
+                self.logger.debug(f"Data type of diff in get_attn_at_layer is {type(diff)}")
+                stats.append(diff.item())
+
+        return np.mean(np.array(stats))
 
     def get_mlp(self) -> Tuple[Tensor, Tensor]:
         pass
