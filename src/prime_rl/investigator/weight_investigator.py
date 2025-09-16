@@ -5,6 +5,7 @@ from torch import Tensor
 from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.investigator.logger import setup_logger
+from prime_rl.investigator.utils import plot_weight_diffs
 
 import numpy as np
 
@@ -28,13 +29,25 @@ class WeightInvestigator:
         self.generate_stats()
 
     def generate_stats(self) -> None:
+        stats = {}
         tok_embeds = self.get_token_embed()
         diff_tensor = tok_embeds[0] - tok_embeds[1]
+        stats["token_embedding"] = diff_tensor.abs().mean().item()
         self.logger.info(f"Difference in token embedding is {diff_tensor.abs().mean()}")
 
-        for layer in range(self.model_1.config.num_hidden_layers):
-            layer_diff = self.get_attn_diff_at_layer(layer)
-            self.logger.info(f"Difference in attention at layer {layer} is {layer_diff}")
+        # stats["attn"] = []
+        # for layer in range(self.model_1.config.num_hidden_layers):
+        #     layer_diff = self.get_attn_diff_at_layer(layer)
+        #     stats["attn"].append(layer_diff)
+        #     self.logger.info(f"Difference in attention at layer {layer} is {layer_diff}")
+
+        # stats["mlp"] = []
+        # for layer in range(self.model_1.config.num_hidden_layers):
+        #     layer_diff = self.get_mlp_diff_at_layer(layer)
+        #     stats["mlp"].append(layer_diff)
+        #     self.logger.info(f"Difference in MLP at layer {layer} is {layer_diff}")
+
+        plot_weight_diffs(stats, self.config.output_dir / "weight_diff.html")
 
     def get_token_embed(self) -> Tuple[Tensor, Tensor]:
         # Get the token embedding layer 
@@ -57,7 +70,7 @@ class WeightInvestigator:
     def get_attn(self) -> Tuple[Tensor, Tensor]:
         pass
 
-    def get_attn_diff_at_layer(self, layer: int) -> Tuple[Tensor, Tensor]:
+    def get_attn_diff_at_layer(self, layer: int) -> float:
         attn_1 = self.model_1.model.layers[layer].self_attn.state_dict()
         attn_2 = self.model_2.model.layers[layer].self_attn.state_dict()
 
@@ -73,15 +86,24 @@ class WeightInvestigator:
     def get_mlp(self) -> Tuple[Tensor, Tensor]:
         pass
 
-    def get_mlp_at_layer(self, layer: int) -> Tuple[Tensor, Tensor]:
-        pass
+    def get_mlp_diff_at_layer(self, layer: int) -> float:
+        mlp_1 = self.model_1.model.layers[layer].mlp.state_dict()
+        mlp_2 = self.model_2.model.layers[layer].mlp.state_dict()
+
+        stats = []
+        for key in mlp_1:
+            if key in mlp_2:
+                diff = (mlp_1[key] - mlp_2[key]).abs().mean()
+                self.logger.debug(f"Data type of diff in get_mlp_diff_at_layer is {type(diff)}")
+                stats.append(diff.item())
+
+        return np.mean(np.array(stats))
 
 def main():
     """Main entry-point for investigator. Run using `uv run investigator`"""
     config = parse_argv(InvestigatorConfig)
     WeightInvestigator(config)
     
-
 
 if __name__ == "__main__":
     main()
