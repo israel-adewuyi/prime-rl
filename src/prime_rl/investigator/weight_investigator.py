@@ -4,11 +4,12 @@ from torch import Tensor
 
 from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
+from prime_rl.investigator.logger import setup_logger
 
 class WeightInvestigator:
     """
-        Class to retrieve the weights of two models. Ideally, the model is the same, 
-        but differs along traininig progress. 
+        Weights-based interp class.
+        Loads two checkpoints of the same model and compare weights across both.
     """
     def __init__(self, config: None):
         self.config = config
@@ -21,6 +22,7 @@ class WeightInvestigator:
         self.logger.info(f"Loading second model at path {config.checkpoint_path_2}")
         self.model_2 = AutoModelForCausalLM.from_pretrained(config.checkpoint_path_2)
 
+        self.logger.info("Generating stats")
         self.generate_stats()
 
     def generate_stats(self) -> None:
