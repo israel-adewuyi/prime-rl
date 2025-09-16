@@ -12,7 +12,13 @@ class WeightInvestigator:
     """
     def __init__(self, config: None):
         self.config = config
+
+        self.logger = setup_logger(config.log)
+        self.logger.info("Starting investigator")
+
+        self.logger.info(f"Loading first model at path {config.checkpoint_path_1}")
         self.model_1 = AutoModelForCausalLM.from_pretrained(config.checkpoint_path_1)
+        self.logger.info(f"Loading second model at path {config.checkpoint_path_2}")
         self.model_2 = AutoModelForCausalLM.from_pretrained(config.checkpoint_path_2)
 
         self.generate_stats()
@@ -54,9 +60,9 @@ class WeightInvestigator:
 
 def main():
     """Main entry-point for investigator. Run using `uv run investigator`"""
-    import asyncio
-
-    asyncio.run(WeightInvestigator(parse_argv(InvestigatorConfig)))
+    config = parse_argv(InvestigatorConfig)
+    WeightInvestigator(config)
+    
 
 
 if __name__ == "__main__":
