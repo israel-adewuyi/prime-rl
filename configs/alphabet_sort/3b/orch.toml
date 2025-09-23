@@ -1,4 +1,4 @@
-max_steps = 400
+max_steps = 600
 batch_size = 128 # full size is 1024
 micro_batch_size = 1
 seq_len = 2048
@@ -12,7 +12,7 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 project = "alphabet-sort"
 space_id = "alphabet-sort"
 dataset_id = "alphabet-sort"
-name = "max_tokens=512,max_turns=3,max_steps=400"
+name = "max_tokens=512,max_turns=3,max_steps=600_round_3"
 
 [monitor.wandb.log_extras]
 samples = true

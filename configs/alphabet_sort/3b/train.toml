@@ -1,10 +1,10 @@
-max_steps = 400
+max_steps = 600
 
 [monitor.wandb]
 project = "alphabet-sort"
 space_id = "alphabet-sort"
 dataset_id = "alphabet-sort"
-name = "max_tokens=512,max_turns=3,max_steps=400"
+name = "max_tokens=512,max_turns=3,max_steps=600_round_3"
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
