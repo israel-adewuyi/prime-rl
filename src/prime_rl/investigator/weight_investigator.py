@@ -1,6 +1,7 @@
 from transformers import AutoModelForCausalLM
 from typing import Tuple
 from torch import Tensor
+from jaxtyping import Float, Int
 
 from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
@@ -28,9 +29,12 @@ class WeightInvestigator:
         self._check_one_to_one_mapping()
 
         self.logger.info("Generating stats")
+        for key in self.model_1.state_dict().keys():
+            self.get_module_stats(self.model_1.state_dict()[key], self.model_2.state_dict()[key])
+            break
         # self.generate_stats()
 
-    def _check_one_to_one_mapping():
+    def _check_one_to_one_mapping(self) -> None:
         """This function checks if both models have a 1-1 mappping. 
            This is achieved by checking if the set of modules in both models are the same
         """
@@ -47,6 +51,27 @@ class WeightInvestigator:
             )
         else:
             self.logger.info(f"All modules align in both models")
+
+    def get_module_stats(
+        self,
+        module_a: Float[Tensor, "..."],
+        module_b: Float[Tensor, "..."],
+        tolerance: float = 1e-5
+    ) -> Tuple[Int, Int]:
+        """Given a tranformer module tensor, return the total number of params as well as the number of non_zero diffs"""
+        diff = module_a - module_b
+        num_non_zero = (diff > tolerance).int().sum()
+
+        tensor_shape = list(diff.shape)
+        num_params = tensor_shape[0]
+        for idx in range(1, len(tensor_shape)):
+            num_params *= tensor_shape[idx]
+        
+        self.logger.debug(f"Number of params in module is {num_params}")
+        self.logger.debug(f"Number of non_zero params in module is {num_non_zero}")
+
+        return num_non_zero, num_params
+        
         
 
     
