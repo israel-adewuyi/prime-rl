@@ -29,9 +29,10 @@ class WeightInvestigator:
         self._check_one_to_one_mapping()
 
         self.logger.info("Generating stats")
-        for key in self.model_1.state_dict().keys():
-            self.get_module_stats(self.model_1.state_dict()[key], self.model_2.state_dict()[key])
-            break
+        self.calculate_update_sparsity()
+        # for key in self.model_1.state_dict().keys():
+        #     self.get_module_stats(self.model_1.state_dict()[key], self.model_2.state_dict()[key])
+        #     break
         # self.generate_stats()
 
     def _check_one_to_one_mapping(self) -> None:
@@ -71,6 +72,15 @@ class WeightInvestigator:
         self.logger.debug(f"Number of non_zero params in module is {num_non_zero}")
 
         return num_non_zero, num_params
+
+    def calculate_update_sparsity(self) -> Float:
+        total_num_non_zero, total_num_params = 0, 0
+        for key in self.model_1.state_dict().keys():
+            num_non_zero, num_params = self.get_module_stats(self.model_1.state_dict()[key], self.model_2.state_dict()[key])
+            total_num_non_zero += num_non_zero
+            total_num_params += num_params
+
+        return 1 - (total_num_non_zero / total_num_params)
         
         
 
