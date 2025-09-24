@@ -22,18 +22,20 @@ class WeightInvestigator:
         self.logger.info("Starting investigator")
 
         self.logger.info(f"Loading first model at path {config.checkpoint_path_1}")
-        self.model_1 = AutoModelForCausalLM.from_pretrained(config.checkpoint_path_1)
+        self.model_1 = AutoModelForCausalLM.from_pretrained(config.checkpoint_path_1).to("cuda")
         self.logger.info(f"Loading second model at path {config.checkpoint_path_2}")
-        self.model_2 = AutoModelForCausalLM.from_pretrained(config.checkpoint_path_2)
+        self.model_2 = AutoModelForCausalLM.from_pretrained(config.checkpoint_path_2).to("cuda")
 
         self._check_one_to_one_mapping()
 
         self.logger.info("Generating stats")
-        self.calculate_update_sparsity()
-        # for key in self.model_1.state_dict().keys():
-        #     self.get_module_stats(self.model_1.state_dict()[key], self.model_2.state_dict()[key])
-        #     break
-        # self.generate_stats()
+
+        update_sparsity = self.calculate_update_sparsity() 
+        self.logger.info(f"Update sparsity across the entire model is {update_sparsity}") 
+        update_sparsity_dict = self.calculate_update_sparsity_across_layers() 
+        self.logger.info(f"Update sparsity layer_wise = {update_sparsity_dict}")
+        update_sparsity_dict_across_submodules = self.calculate_update_sparsity_across_submodules()
+        self.logger.info(f"Update sparsity across submodules = {update_sparsity_dict_across_submodules}")
 
     def _check_one_to_one_mapping(self) -> None:
         """This function checks if both models have a 1-1 mappping. 
@@ -81,10 +83,69 @@ class WeightInvestigator:
             total_num_params += num_params
 
         return 1 - (total_num_non_zero / total_num_params)
-        
-        
 
-    
+    def calculate_update_sparsity_across_layers(self) -> dict: 
+        """ Calculate update sparsity for each layer (grouped by prefix in state_dict). 
+        Returns a dict {layer_name: sparsity_value}. 
+        """ 
+        layer_stats = {} 
+        for key in self.model_1.state_dict().keys(): 
+            module_a = self.model_1.state_dict()[key] 
+            module_b = self.model_2.state_dict()[key] 
+            if "layers.17" in key: 
+                self.logger.debug(key) 
+            num_non_zero, num_params = self.get_module_stats(module_a, module_b) 
+            parts = key.split(".") 
+            if "layers" in parts: 
+                layer_idx = parts.index("layers") 
+                layer_name = ".".join(parts[: layer_idx + 2]) 
+            else: # fallback for embeddings/lm_head/etc 
+                layer_name = key 
+            if layer_name not in layer_stats: 
+                layer_stats[layer_name] = {"non_zero": 0, "params": 0} 
+                layer_stats[layer_name]["non_zero"] += num_non_zero 
+                layer_stats[layer_name]["params"] += num_params 
+                        
+        # compute update sparsity per layer 
+        sparsity_per_layer = {} 
+        for layer, stats in layer_stats.items(): 
+            sparsity = 1 - (stats["non_zero"] / stats["params"]) 
+            sparsity_per_layer[layer] = sparsity 
+            # self.logger.info(f"Layer {layer}: Update sparsity = {sparsity:.4f}") 
+        return sparsity_per_layer
+
+    def calculate_update_sparsity_across_submodules(self, tolerance: float = 1e-5) -> dict:
+        """
+        Calculate update sparsity for each parameter tensor (weight/bias) inside each submodule.
+        Returns a dict:
+        {
+            "model.layers.17.self_attn.q_proj.weight": sparsity_value,
+            "model.layers.17.self_attn.q_proj.bias": sparsity_value,
+            ...
+        }
+        """
+        submodule_stats = {}
+
+        for key in self.model_1.state_dict().keys():
+            module_a = self.model_1.state_dict()[key]
+            module_b = self.model_2.state_dict()[key]
+
+            num_non_zero, num_params = self.get_module_stats(module_a, module_b)
+
+            if key not in submodule_stats:
+                submodule_stats[key] = {"non_zero": 0, "params": 0}
+
+            submodule_stats[key]["non_zero"] += num_non_zero
+            submodule_stats[key]["params"] += num_params
+
+        # compute sparsity per submodule (weight/bias included)
+        sparsity_per_submodule = {}
+        for key, stats in submodule_stats.items():
+            sparsity = 1 - (stats["non_zero"] / stats["params"])
+            sparsity_per_submodule[key] = sparsity
+            self.logger.info(f"{key}: Update sparsity = {sparsity:.4f}")
+
+        return sparsity_per_submodule
 
 def main():
     """Main entry-point for investigator. Run using `uv run investigator`"""
