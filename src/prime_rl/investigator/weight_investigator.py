@@ -6,8 +6,10 @@ from jaxtyping import Float, Int
 from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.investigator.logger import setup_logger
-from prime_rl.investigator.utils import plot_weight_diffs
+from prime_rl.investigator.utils import plot_weight_diffs, visualize_sparsity
 
+import os
+import json
 import numpy as np
 
 class WeightInvestigator:
@@ -31,11 +33,44 @@ class WeightInvestigator:
         self.logger.info("Generating stats")
 
         update_sparsity = self.calculate_update_sparsity() 
-        self.logger.info(f"Update sparsity across the entire model is {update_sparsity}") 
+        # self.logger.info(f"Update sparsity across the entire model is {update_sparsity}") 
         update_sparsity_dict = self.calculate_update_sparsity_across_layers() 
-        self.logger.info(f"Update sparsity layer_wise = {update_sparsity_dict}")
+        # self.logger.info(f"Update sparsity layer_wise = {update_sparsity_dict}")
         update_sparsity_dict_across_submodules = self.calculate_update_sparsity_across_submodules()
-        self.logger.info(f"Update sparsity across submodules = {update_sparsity_dict_across_submodules}")
+        # self.logger.info(f"Update sparsity across submodules = {update_sparsity_dict_across_submodules}")
+
+        self.merge_and_save_dicts("Qwen_2.5_0.5B_VS_ckpt_600", update_sparsity, update_sparsity_dict, update_sparsity_dict_across_submodules)
+
+        visualize_sparsity()
+
+    def merge_and_save_dicts(
+        models_being_compared: str,
+        update_sparsity: float,
+        update_sparsity_dict: dict,
+        update_sparsity_dict_across_submodules: dict,
+        path: str = "test.json"
+    ) -> None:
+        print(f"name is {models_being_compared}")
+        print(f"US is {update_sparsity}")
+        print(f"USS is {update_sparsity_dict}")
+        print(f"USSS is {update_sparsity_dict_across_submodules}")
+        print(path)
+        # load existing file if available
+        if os.path.exists(path):
+            with open(path, "r") as file:
+                all_data = json.load(file)
+        else:
+            all_data = {}
+    
+        # add current checkpoint
+        all_data[models_being_compared] = {
+            "global": update_sparsity,
+            "layers": update_sparsity_dict,
+            "submodules": update_sparsity_dict_across_submodules,
+        }
+    
+        with open(path, "w") as file:
+            json.dump(all_data, file, indent=4)
 
     def _check_one_to_one_mapping(self) -> None:
         """This function checks if both models have a 1-1 mappping. 
