@@ -6,10 +6,11 @@ from jaxtyping import Float, Int
 from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.investigator.logger import setup_logger
-from prime_rl.investigator.utils import plot_weight_diffs, visualize_sparsity
+from prime_rl.investigator.utils import plot_weight_diffs, visualize_sparsity, tensor_to_serializable
 
 import os
 import json
+import torch
 import numpy as np
 
 class WeightInvestigator:
@@ -39,11 +40,12 @@ class WeightInvestigator:
         update_sparsity_dict_across_submodules = self.calculate_update_sparsity_across_submodules()
         # self.logger.info(f"Update sparsity across submodules = {update_sparsity_dict_across_submodules}")
 
-        self.merge_and_save_dicts("Qwen_2.5_0.5B_VS_ckpt_600", update_sparsity, update_sparsity_dict, update_sparsity_dict_across_submodules)
+        self.merge_and_save_dicts("ckpt_300_VS_ckpt_600", update_sparsity, update_sparsity_dict, update_sparsity_dict_across_submodules)
 
         visualize_sparsity()
 
     def merge_and_save_dicts(
+        self,
         models_being_compared: str,
         update_sparsity: float,
         update_sparsity_dict: dict,
@@ -70,7 +72,8 @@ class WeightInvestigator:
         }
     
         with open(path, "w") as file:
-            json.dump(all_data, file, indent=4)
+            serializable_data = tensor_to_serializable(all_data)
+            json.dump(serializable_data, file, indent=4)
 
     def _check_one_to_one_mapping(self) -> None:
         """This function checks if both models have a 1-1 mappping. 
@@ -144,7 +147,7 @@ class WeightInvestigator:
         # compute update sparsity per layer 
         sparsity_per_layer = {} 
         for layer, stats in layer_stats.items(): 
-            sparsity = 1 - (stats["non_zero"] / stats["params"]) 
+            sparsity = 1 - (stats["non_zero"] / stats["params"])
             sparsity_per_layer[layer] = sparsity 
             # self.logger.info(f"Layer {layer}: Update sparsity = {sparsity:.4f}") 
         return sparsity_per_layer
