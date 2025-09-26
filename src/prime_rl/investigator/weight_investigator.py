@@ -6,7 +6,7 @@ from jaxtyping import Float, Int
 from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.investigator.logger import setup_logger
-from prime_rl.investigator.utils import visualize_sparsity, tensor_to_serializable
+from prime_rl.investigator.utils import visualize_sparsity, tensor_to_serializable, get_name_of_run
 
 import os
 import json
@@ -31,7 +31,9 @@ class WeightInvestigator:
 
         self._check_one_to_one_mapping()
 
-        self.logger.info("Generating stats")
+        self.name = get_name_of_run(config.checkpoint_path_1, config.checkpoint_path_2)
+
+        self.logger.info(f"Generating stats for run {self.name}")
 
         update_sparsity = self.calculate_update_sparsity() 
         self.logger.debug(f"Update sparsity across the entire model is {update_sparsity}") 
@@ -42,7 +44,7 @@ class WeightInvestigator:
 
         if config.merge:
             self.logger.info("Merging and saving dicts")
-            self.merge_and_save_dicts("ckpt_300_VS_ckpt_600", update_sparsity, update_sparsity_dict, update_sparsity_dict_across_submodules)
+            self.merge_and_save_dicts(self.name, update_sparsity, update_sparsity_dict, update_sparsity_dict_across_submodules)
         else:
             self.logger.info("Skipping the merge process.")
 

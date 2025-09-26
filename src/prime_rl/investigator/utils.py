@@ -80,3 +80,7 @@ def tensor_to_serializable(obj):
         return [tensor_to_serializable(v) for v in obj]
     else:
         return obj
+
+
+def get_name_of_run(checkpoint_path_1: str, checkpoint_path_2: str):
+    return checkpoint_path_1.split('/')[-1] + "__" + checkpoint_path_2.split('/')[-1]
