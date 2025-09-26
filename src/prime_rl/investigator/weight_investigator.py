@@ -33,7 +33,7 @@ class WeightInvestigator:
 
         self.name = get_name_of_run(config.checkpoint_path_1, config.checkpoint_path_2)
 
-        self.logger.info(f"Generating stats for run {self.name}")
+        self.logger.info(f"Generating stats for run {self.name} with configs {self.config}")
 
         update_sparsity = self.calculate_update_sparsity() 
         self.logger.debug(f"Update sparsity across the entire model is {update_sparsity}") 
