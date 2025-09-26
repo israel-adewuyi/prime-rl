@@ -6,7 +6,7 @@ from jaxtyping import Float, Int
 from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.investigator.logger import setup_logger
-from prime_rl.investigator.utils import plot_weight_diffs, visualize_sparsity, tensor_to_serializable
+from prime_rl.investigator.utils import visualize_sparsity, tensor_to_serializable
 
 import os
 import json
@@ -34,15 +34,23 @@ class WeightInvestigator:
         self.logger.info("Generating stats")
 
         update_sparsity = self.calculate_update_sparsity() 
-        # self.logger.info(f"Update sparsity across the entire model is {update_sparsity}") 
+        self.logger.debug(f"Update sparsity across the entire model is {update_sparsity}") 
         update_sparsity_dict = self.calculate_update_sparsity_across_layers() 
-        # self.logger.info(f"Update sparsity layer_wise = {update_sparsity_dict}")
+        self.logger.debug(f"Update sparsity layer_wise = {update_sparsity_dict}")
         update_sparsity_dict_across_submodules = self.calculate_update_sparsity_across_submodules()
-        # self.logger.info(f"Update sparsity across submodules = {update_sparsity_dict_across_submodules}")
+        self.logger.debug(f"Update sparsity across submodules = {update_sparsity_dict_across_submodules}")
 
-        self.merge_and_save_dicts("ckpt_300_VS_ckpt_600", update_sparsity, update_sparsity_dict, update_sparsity_dict_across_submodules)
+        if config.merge:
+            self.logger.info("Merging and saving dicts")
+            self.merge_and_save_dicts("ckpt_300_VS_ckpt_600", update_sparsity, update_sparsity_dict, update_sparsity_dict_across_submodules)
+        else:
+            self.logger.info("Skipping the merge process.")
 
-        visualize_sparsity()
+        if config.generate_charts:
+            self.logger.info("Generating charts")
+            visualize_sparsity()
+        else:
+            self.logger.info("Skipping the generation of charts")
 
     def merge_and_save_dicts(
         self,
@@ -52,11 +60,6 @@ class WeightInvestigator:
         update_sparsity_dict_across_submodules: dict,
         path: str = "test.json"
     ) -> None:
-        print(f"name is {models_being_compared}")
-        print(f"US is {update_sparsity}")
-        print(f"USS is {update_sparsity_dict}")
-        print(f"USSS is {update_sparsity_dict_across_submodules}")
-        print(path)
         # load existing file if available
         if os.path.exists(path):
             with open(path, "r") as file:
@@ -137,8 +140,9 @@ class WeightInvestigator:
             if "layers" in parts: 
                 layer_idx = parts.index("layers") 
                 layer_name = ".".join(parts[: layer_idx + 2]) 
-            else: # fallback for embeddings/lm_head/etc 
+            else:  
                 layer_name = key 
+                
             if layer_name not in layer_stats: 
                 layer_stats[layer_name] = {"non_zero": 0, "params": 0} 
                 layer_stats[layer_name]["non_zero"] += num_non_zero 
@@ -149,7 +153,7 @@ class WeightInvestigator:
         for layer, stats in layer_stats.items(): 
             sparsity = 1 - (stats["non_zero"] / stats["params"])
             sparsity_per_layer[layer] = sparsity 
-            # self.logger.info(f"Layer {layer}: Update sparsity = {sparsity:.4f}") 
+            self.logger.debug(f"Layer {layer}: Update sparsity = {sparsity:.4f}") 
         return sparsity_per_layer
 
     def calculate_update_sparsity_across_submodules(self, tolerance: float = 1e-5) -> dict:
@@ -167,12 +171,9 @@ class WeightInvestigator:
         for key in self.model_1.state_dict().keys():
             module_a = self.model_1.state_dict()[key]
             module_b = self.model_2.state_dict()[key]
-
             num_non_zero, num_params = self.get_module_stats(module_a, module_b)
-
             if key not in submodule_stats:
                 submodule_stats[key] = {"non_zero": 0, "params": 0}
-
             submodule_stats[key]["non_zero"] += num_non_zero
             submodule_stats[key]["params"] += num_params
 
@@ -181,7 +182,7 @@ class WeightInvestigator:
         for key, stats in submodule_stats.items():
             sparsity = 1 - (stats["non_zero"] / stats["params"])
             sparsity_per_submodule[key] = sparsity
-            self.logger.info(f"{key}: Update sparsity = {sparsity:.4f}")
+            self.logger.debug(f"{key}: Update sparsity = {sparsity:.4f}")
 
         return sparsity_per_submodule
 

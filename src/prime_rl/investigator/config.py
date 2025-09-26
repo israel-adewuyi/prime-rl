@@ -19,3 +19,5 @@ class InvestigatorConfig(BaseSettings):
       
     # Output directory  
     output_dir: Path = Path("outputs")
+    generate_charts: bool = False
+    merge: bool = False
