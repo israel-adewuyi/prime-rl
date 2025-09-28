@@ -1,5 +1,4 @@
-from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import Field
 
@@ -23,36 +22,23 @@ class LogConfig(BaseConfig):
     """Configures the logger."""
 
     level: Annotated[
-        Literal["debug", "info", "sucess"],
+        str,
         Field(description="Logging level for the process. Will determine the logging verbosity and format."),
     ] = "info"
 
-    utc: Annotated[
+    file: Annotated[
         bool,
         Field(
-            description="Whether to use UTC time in the logger. If False, it will default to the local time. If the local time is wrong, you can set it by setting the `TZ` environment variable. For example, `TZ=America/Los_Angeles` will set the local time to SF time."
+            description="Whether to log to a file. If True, will log to a file in the output directory.",
+        ),
+    ] = True
+    
+    log_data: Annotated[
+        bool,
+        Field(
+            description="Whether to log the first data sample to the logger.",
         ),
     ] = False
-
-
-class FileMonitorConfig(BaseConfig):
-    """Configures logging to a file."""
-
-    path: Annotated[Path, Field(description="The file path to log to")]
-
-
-class SocketMonitorConfig(BaseConfig):
-    """Configures logging to a Unix socket."""
-
-    path: Annotated[Path, Field(description="The socket path to log to")]
-
-
-class APIMonitorConfig(BaseConfig):
-    """Configures logging to an API via HTTP."""
-
-    url: Annotated[str, Field(description="The API URL to log to")]
-
-    auth_token: Annotated[str, Field(description="The API auth token to use")]
 
 
 class LogExtrasConfig(BaseConfig):
@@ -124,25 +110,3 @@ class WandbMonitorConfig(BaseConfig):
             description="Configuration for logging extras to W&B tables. If None, no extras are logged.",
         ),
     ] = LogExtrasConfig()
-
-
-class MultiMonitorConfig(BaseConfig):
-    """Configures the monitoring system."""
-
-    # All possible monitors (currently only supports one instance per type)
-    file: FileMonitorConfig | None = None
-    socket: SocketMonitorConfig | None = None
-    api: APIMonitorConfig | None = None
-    wandb: WandbMonitorConfig | None = None
-
-    system_log_frequency: Annotated[
-        int,
-        Field(
-            ge=0,
-            description="Interval in seconds to log system metrics. If 0, no system metrics are logged.",
-        ),
-    ] = 0
-
-    def __str__(self) -> str:
-        is_enabled = lambda x: "enabled" if x is not None else "disabled"  # noqa
-        return f"file={is_enabled(self.file)}, socket={is_enabled(self.socket)}, api={is_enabled(self.api)}, wandb={is_enabled(self.wandb)}, system_log_frequency={self.system_log_frequency}"

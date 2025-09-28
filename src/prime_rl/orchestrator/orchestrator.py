@@ -13,7 +13,7 @@ from verifiers.types import GenerateOutputs, ProcessedOutputs
 from transformers import AutoTokenizer
 
 from prime_rl.orchestrator.ckpt import Progress, setup_ckpt_manager
-from prime_rl.eval.utils import run_eval
+from prime_rl.eval.utils import run_evals
 from prime_rl.orchestrator.client import (
     check_has_model,
     check_health,
@@ -24,13 +24,12 @@ from prime_rl.orchestrator.client import (
 from prime_rl.orchestrator.config import OrchestratorConfig
 from prime_rl.orchestrator.buffer import setup_buffer, make_rollouts, Rollout
 from prime_rl.orchestrator.batch import prepare_batch
-from prime_rl.orchestrator.logger import setup_logger
+from prime_rl.utils.logger import setup_logger
 from prime_rl.orchestrator.advantage import compute_advantages
 from prime_rl.orchestrator.utils import (
     wait_for_weight_checkpoint,
     print_benchmark,
-    parse_truncated_completions,
-    process_rewards,
+    parse_is_truncated_completions,
 )
 from prime_rl.utils.monitor import setup_monitor
 from prime_rl.utils.pydantic_config import parse_argv
@@ -48,7 +47,9 @@ import numpy as np
 @logger.catch(reraise=True)
 async def orchestrate(config: OrchestratorConfig):
     # Initialize the logger
-    logger = setup_logger(config.log)
+    logger = setup_logger(
+        config.log.level, log_file=config.output_dir / "logs" / "orchestrator.log" if config.log.file else None
+    )
     logger.info("Starting orchestrator")
 
     # Print warning if running in benchmark mode
@@ -69,9 +70,9 @@ async def orchestrate(config: OrchestratorConfig):
     tokenizer = AutoTokenizer.from_pretrained(config.model.name, trust_remote_code=config.model.trust_remote_code)
 
     # Setup monitor
-    logger.info(f"Initializing monitor ({config.monitor})")
+    logger.info(f"Initializing monitor ({config.wandb})")
     monitor = setup_monitor(
-        config.monitor,
+        config.wandb,
         output_dir=config.output_dir,
         tokenizer=tokenizer,
         run_config=config,
@@ -173,27 +174,15 @@ async def orchestrate(config: OrchestratorConfig):
             last_eval_step = ckpt_step
             logger.info(f"Running evals for checkpoint step {ckpt_step}")
             eval_start_time = time.time()
-            await asyncio.gather(
-                *[
-                    run_eval(
-                        client=client,
-                        eval_id=eval_id,
-                        env_args=config.eval.environment_args.get(eval_id, {}),
-                        model_config=config.model,
-                        sampling_config=config.eval.sampling,
-                        num_examples=num_examples,
-                        rollouts_per_example=rollouts_per_example,
-                        ckpt_step=ckpt_step,
-                        output_dir=config.output_dir,
-                        save=config.eval.save,
-                        step=progress.step,
-                    )
-                    for eval_id, num_examples, rollouts_per_example in zip(
-                        config.eval.environment_ids,
-                        config.eval.num_examples,
-                        config.eval.rollouts_per_example,
-                    )
-                ]
+            await run_evals(
+                client=client,
+                eval_config=config.eval,
+                model_config=config.model,
+                sampling_config=config.eval.sampling,
+                client_config=config.client,
+                output_dir=config.output_dir,
+                ckpt_step=ckpt_step,
+                step=progress.step,
             )
             eval_time = time.time() - eval_start_time
             logger.info(f"Evaluated in {eval_time:.2f}s")
@@ -230,6 +219,7 @@ async def orchestrate(config: OrchestratorConfig):
                 "min_p": 0.0,
             }
             sampling_args["extra_body"]["min_tokens"] = sampling_args.pop("min_tokens")
+            sampling_args["extra_body"]["repetition_penalty"] = sampling_args.pop("repetition_penalty")
 
             # Generate completions + rewards with verifiers
             logger.info(f"Sending {len(problems)} requests to environments")
@@ -257,22 +247,24 @@ async def orchestrate(config: OrchestratorConfig):
                 mask_truncated_completions=config.mask_truncated_completions,
             )
 
-            rewards = process_rewards(
-                rewards=processed_outputs.rewards,
-                completion_lengths=list(map(len, processed_outputs.completion_ids)),
-                rollouts_per_prompt=config.rollouts_per_example,
-                length_bonus=config.length_bonus,
-            )
+            # Extract individual reward function metrics from generate_outputs
+            individual_reward_outputs = {}
+            logger.debug(f"Found {len(generate_outputs.metrics)} individual reward functions")
+            for func_name, func_rewards in generate_outputs.metrics.items():
+                individual_reward_outputs[func_name] = torch.tensor(func_rewards)
+                logger.debug(f"Collected {len(func_rewards)} rewards for {func_name}")
+
             # Compute advantages
             advantages = compute_advantages(
-                rewards=rewards,
+                rewards=processed_outputs.rewards,
                 completion_lengths=list(map(len, processed_outputs.completion_ids)),
                 samples_per_problem=config.rollouts_per_example,
                 advantage_type=config.advantage_type,
             )
 
             # Parse whether the completions were truncated
-            is_truncated = parse_truncated_completions(states=generate_outputs.state)
+            responses = [state["responses"] for state in generate_outputs.state]
+            is_truncated = parse_is_truncated_completions(responses=responses)
 
             # Update pool
             rollouts = make_rollouts(
@@ -431,11 +423,16 @@ async def orchestrate(config: OrchestratorConfig):
         }
         monitor.log(perf_metrics)
 
-        # Log reward metrics to monitor
+        # Log reward metrics to monitor (composite + individual)
         reward_metrics = {
             "reward/mean": rewards.mean().item(),
             "iter": progress.step,
         }
+
+        # Add individual reward function metrics
+        for func_name, func_rewards in individual_reward_outputs.items():
+            reward_metrics[f"reward/{func_name}/mean"] = func_rewards.mean().item()
+
         monitor.log(reward_metrics)
 
         # Log rewards metrics to monitor
@@ -460,69 +457,53 @@ async def orchestrate(config: OrchestratorConfig):
         monitor.log(time_metrics)
 
         # Log samples and distributions to W&B table if enabled
-        if monitor.wandb:
-            monitor.wandb.log_samples(
-                input_tokens=prompt_tokens,
-                output_tokens=completion_tokens,
-                rewards=rewards.flatten().tolist(),
-                advantages=advantages.flatten().tolist(),
-                rollouts_per_problem=config.rollouts_per_example,
-                step=progress.step,
-            )
-            monitor.wandb.log_distributions(
-                distributions={
-                    "rewards": rewards.flatten().tolist(),
-                    "advantages": advantages.flatten().tolist(),
-                    "problem_rewards": rewards.mean(-1).tolist(),
-                    "problem_advantages": advantages.mean(-1).tolist(),
-                },
-                step=progress.step,
-            )
+        monitor.log_samples(
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            rewards=rewards.flatten().tolist(),
+            advantages=advantages.flatten().tolist(),
+            rollouts_per_problem=config.rollouts_per_example,
+            step=progress.step,
+        )
+
+        distributions = {
+            "rewards": rewards.flatten().tolist(),
+            "advantages": advantages.flatten().tolist(),
+            "problem_rewards": rewards.mean(-1).tolist(),
+            "problem_advantages": advantages.mean(-1).tolist(),
+        }
+
+        for func_name, func_rewards in individual_reward_outputs.items():
+            distributions[f"{func_name}_rewards"] = func_rewards.tolist()
+
+        monitor.log_distributions(distributions=distributions, step=progress.step)
 
         # Increment progress
         progress.step += 1
         is_first_step = False
 
-    eval_tasks = None
     if config.eval:
         logger.info("Running final evals")
-        eval_tasks = [
-            asyncio.create_task(
-                run_eval(
-                    client=client,
-                    eval_id=eval_id,
-                    env_args=config.eval.environment_args.get(eval_id, {}),
-                    model_config=config.model,
-                    sampling_config=config.eval.sampling,
-                    num_examples=num_examples,
-                    rollouts_per_example=rollouts_per_example,
-                    ckpt_step=ckpt_step,
-                    output_dir=config.output_dir,
-                    save=config.eval.save,
-                    step=progress.step,
-                )
-            )
-            for eval_id, num_examples, rollouts_per_example in zip(
-                config.eval.environment_ids,
-                config.eval.num_examples,
-                config.eval.rollouts_per_example,
-            )
-        ]
+        await run_evals(
+            client=client,
+            eval_config=config.eval,
+            model_config=config.model,
+            sampling_config=config.eval.sampling,
+            client_config=config.client,
+            output_dir=config.output_dir,
+            ckpt_step=ckpt_step,
+            step=progress.step,
+        )
 
     # Log final (immutable) samples and distributions to W&B table
-    if monitor.wandb:
-        logger.info("Logging final samples and distributions as W&B table")
-        monitor.wandb.log_final_samples()
-        monitor.wandb.log_final_distributions()
+    monitor.log_final_samples()
+    monitor.log_final_distributions()
+    monitor.save_final_summary()
 
     # Write final checkpoint
     if ckpt_manager is not None:
         logger.info("Writing final checkpoint")
         ckpt_manager.save(progress, buffer, step=progress.step)
-
-    # Await evals
-    if eval_tasks is not None:
-        await asyncio.gather(*eval_tasks)
 
     logger.success("Orchestrator finished.")
 
@@ -533,7 +514,6 @@ async def orchestrate(config: OrchestratorConfig):
 
 def main():
     """Main entry-point for orchestrator. Run using `uv run orchestrator`"""
-    import asyncio
 
     asyncio.run(orchestrate(parse_argv(OrchestratorConfig)))
 

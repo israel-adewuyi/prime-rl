@@ -47,16 +47,6 @@ def validate_shared_model_name(
         )
 
 
-def validate_shared_max_model_len(
-    orchestrator: OrchestratorConfig,
-    inference: Optional[InferenceConfig] = None,
-) -> None:
-    if inference and inference.model.max_model_len and orchestrator.seq_len != inference.model.max_model_len:
-        raise ValueError(
-            f"Orchestrator sequence length ({orchestrator.seq_len}) and inference model max model length ({inference.model.max_model_len}) are not the same. Please specify the same max model length for both."
-        )
-
-
 def validate_shared_output_dir(
     trainer: RLTrainerConfig,
     orchestrator: OrchestratorConfig,
@@ -71,10 +61,10 @@ def validate_shared_wandb_config(
     trainer: RLTrainerConfig,
     orchestrator: OrchestratorConfig,
 ) -> None:
-    if trainer.monitor.wandb and orchestrator.monitor.wandb:
-        if trainer.monitor.wandb.project != orchestrator.monitor.wandb.project:
+    if trainer.wandb and orchestrator.wandb:
+        if trainer.wandb.project != orchestrator.wandb.project:
             raise ValueError(
-                f"Trainer W&B project ({trainer.monitor.wandb.project}) and orchestrator W&B project ({orchestrator.monitor.wandb.project}) are not the same. Please specify the same W&B project for both."
+                f"Trainer W&B project ({trainer.wandb.project}) and orchestrator W&B project ({orchestrator.wandb.project}) are not the same. Please specify the same W&B project for both."
             )
 
 

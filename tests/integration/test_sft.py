@@ -9,13 +9,13 @@ pytestmark = [pytest.mark.slow, pytest.mark.gpu]
 
 TIMEOUT = 300  # 5 minutes
 ENV = {"CUDA_VISIBLE_DEVICES": "1"}
-SFT_CMD = ["uv", "run", "sft", "@", "configs/reverse_text/sft.toml", "--max-steps", "10", "--ckpt"]
+SFT_CMD = ["uv", "run", "sft", "@", "configs/reverse_text/sft/train.toml", "--max-steps", "10", "--ckpt"]
 SFT_RESUME_CMD = [
     "uv",
     "run",
     "sft",
     "@",
-    "configs/reverse_text/sft.toml",
+    "configs/reverse_text/sft/train.toml",
     "--max-steps",
     "20",
     "--ckpt.resume-step",
@@ -33,7 +33,7 @@ def wandb_project(username: str) -> str:
 
 @pytest.fixture(scope="module")
 def sft_process(
-    run_process: Callable[[Command, Environment], ProcessResult],
+    run_process: Callable[[Command, Environment, int], ProcessResult],
     output_dir: Path,
     wandb_project: str,
     branch_name: str,
@@ -44,9 +44,9 @@ def sft_process(
     return run_process(
         SFT_CMD
         + [
-            "--monitor.wandb.project",
+            "--wandb.project",
             wandb_project,
-            "--monitor.wandb.name",
+            "--wandb.name",
             wandb_name,
             "--output-dir",
             output_dir.as_posix(),
@@ -70,10 +70,29 @@ def sft_resume_process(
     return run_process(
         SFT_RESUME_CMD
         + [
-            "--monitor.wandb.project",
+            "--wandb.project",
             wandb_project,
-            "--monitor.wandb.name",
+            "--wandb.name",
             wandb_name,
+            "--output-dir",
+            output_dir.as_posix(),
+        ],
+        ENV,
+        TIMEOUT,
+    )
+
+
+SFT_CMD_MOE = ["uv", "run", "sft", "@", "configs/debug/moe/sft/train.toml"]
+
+
+@pytest.fixture
+def sft_moe_process(
+    run_process: Callable[[Command, Environment, int], ProcessResult],
+    output_dir: Path,
+) -> ProcessResult:
+    return run_process(
+        SFT_CMD_MOE
+        + [
             "--output-dir",
             output_dir.as_posix(),
         ],
@@ -90,3 +109,7 @@ def test_no_error_resume(sft_resume_process: ProcessResult):
     assert sft_resume_process.returncode == 0, (
         f"SFT resume process failed with return code {sft_resume_process.returncode}"
     )
+
+
+def test_no_error_moe(sft_moe_process: ProcessResult):
+    assert sft_moe_process.returncode == 0, f"SFT MOE process failed with return code {sft_moe_process.returncode}"

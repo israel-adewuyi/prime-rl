@@ -1,0 +1,12 @@
+recompute_logprobs = false
+
+[wandb]
+
+[model]
+name = "Qwen/Qwen3-30B-A3B"
+trust_remote_code = true
+
+[model.ac]
+
+[optim]
+lr = 1e-6

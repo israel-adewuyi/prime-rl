@@ -1,0 +1,33 @@
+max_steps = 400
+batch_size = 128 # full size is 1024
+micro_batch_size = 1
+seq_len = 2048
+rollouts_per_example = 16
+mask_truncated_completions = false
+
+[model]
+name = "Qwen/Qwen2.5-0.5B-Instruct"
+
+[wandb]
+project = "alphabet-sort"
+space_id = "alphabet-sort"
+dataset_id = "alphabet-sort"
+name = "max_tokens=512,max_turns=3,max_steps=400"
+
+[wandb.log_extras]
+samples = true
+distributions = true
+interval = 2
+
+[environment]
+id = "alphabet-sort"
+
+[environment.args]
+min_turns = 2
+max_turns = 3
+
+[sampling]
+max_tokens = 512
+
+[ckpt]
+interval = 100

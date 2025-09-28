@@ -12,7 +12,7 @@ from prime_rl.trainer.config import (
     SchedulerConfigType,
     WeightCheckpointConfig,
 )
-from prime_rl.utils.config import LogConfig, MultiMonitorConfig
+from prime_rl.utils.config import LogConfig, WandbMonitorConfig
 from prime_rl.utils.pydantic_config import BaseConfig, BaseSettings
 
 
@@ -34,8 +34,8 @@ class LossConfig(BaseModel):
 class FakeDataLoaderConfig(BaseConfig):
     """Configures a fake data loader sampling random micro batches for debugging."""
 
-    micro_batch_size: Annotated[int, Field(ge=1)] = 8
-    batch_size: Annotated[int, Field(ge=1)] = 8
+    micro_batch_size: Annotated[int, Field(ge=1)] = 1
+    batch_size: Annotated[int, Field(ge=1)] = 2
     seq_len: Annotated[int, Field(ge=1)] = 128
 
     @model_validator(mode="after")
@@ -80,8 +80,8 @@ class RLTrainerConfig(BaseSettings):
     # The logging configuration
     log: LogConfig = LogConfig()
 
-    # The monitor configuration
-    monitor: MultiMonitorConfig = MultiMonitorConfig()
+    # The wandb configuration
+    wandb: WandbMonitorConfig | None = None
 
     output_dir: Annotated[
         Path,
@@ -105,7 +105,7 @@ class RLTrainerConfig(BaseSettings):
         ),
     ] = 2
 
-    profile_path: Annotated[Path | None, Field(description="Path to write memory profile to.")] = None
+    memory_profiler_path: Annotated[Path | None, Field(description="Path to write memory profile to.")] = None
 
     recompute_logprobs: Annotated[
         bool,
@@ -121,47 +121,33 @@ class RLTrainerConfig(BaseSettings):
         ),
     ] = False
 
+    trace_path: Annotated[Path | None, Field(description="Path to write pytorch profiler trace to.")] = None
+
     @model_validator(mode="after")
     def auto_setup_bench(self):
         if self.bench:
             self.max_steps = 4  # 1 Warmup + 3 Benchmark
             if not self.data.fake:
                 self.data.fake = FakeDataLoaderConfig()
-            if self.monitor.wandb:  # Do not log extras
-                self.monitor.wandb.log_extras = None
+            if self.wandb:  # Do not log extras
+                self.wandb.log_extras = None
             if self.ckpt:  # Do not checkpoint
                 self.ckpt = None
         return self
 
     @model_validator(mode="after")
-    def validate_scheduler(self):
-        # Constant scheduler does not require any validation/ setup
-        if self.scheduler.type == "constant":
-            return self
-
-        # Must specify max_steps when using a scheduler other than `constant`
-        if self.max_steps is None:
-            raise ValueError("Must specify max_steps when using a scheduler other than `constant`")
-
-        # If decay_steps is not specified, use remaining steps after warmup
-        if self.scheduler.decay_steps is None:
-            if not (self.scheduler.warmup_steps <= self.max_steps):
-                raise ValueError("config.scheduler.warmup_steps must be less than or equal to config.max_steps")
-
-            self.scheduler.decay_steps = self.max_steps - self.scheduler.warmup_steps
-            assert self.scheduler.decay_steps >= 0, "config.scheduler.decay_steps must be positive"
-
-        # If decay_steps is specified, validate it
-        else:
-            if not (self.scheduler.warmup_steps + self.scheduler.decay_steps <= self.max_steps):
-                raise ValueError(
-                    "config.scheduler.warmup_steps + config.scheduler.decay_steps must be less than or equal to config.max_steps"
-                )
-
+    def disable_logging_wandb_samples(self):
+        if self.wandb and self.wandb.log_extras:
+            self.wandb.log_extras.samples = False
         return self
 
     @model_validator(mode="after")
-    def disable_logging_wandb_samples(self):
-        if self.monitor.wandb and self.monitor.wandb.log_extras:
-            self.monitor.wandb.log_extras.samples = False
+    def dont_do_massive_traces(self):
+        if self.trace_path:
+            if self.max_steps is None:
+                raise ValueError("Must specify max_steps when tracing")
+            if self.max_steps >= 10:
+                raise ValueError(
+                    "Tracing more than 10 steps is not recommended as your trace will be massive. Remove this line if you really want to trace more steps."
+                )
         return self

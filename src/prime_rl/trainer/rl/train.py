@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 import time
 from copy import deepcopy
 
@@ -5,13 +6,14 @@ from copy import deepcopy
 # ruff: noqa: I001
 
 import torch
+from torch.profiler import profile, ProfilerActivity, record_function
 from loguru import logger
 from prime_rl.trainer.ckpt import Progress, setup_ckpt_manager
 from prime_rl.trainer.optim import setup_optimizer
 from prime_rl.trainer.weights import setup_weight_ckpt_manager
 from prime_rl.trainer.rl.config import RLTrainerConfig
 from prime_rl.trainer.rl.data import DataLoader, FakeDataLoader
-from prime_rl.trainer.logger import setup_logger
+from prime_rl.utils.logger import setup_logger
 from prime_rl.trainer.rl.loss import (
     shift_logits,
     selective_log_softmax,
@@ -30,6 +32,7 @@ from prime_rl.trainer.model import (
 from prime_rl.trainer.parallel_dims import get_parallel_dims
 from prime_rl.trainer.perf import get_perf_counter
 from prime_rl.trainer.utils import (
+    MemoryProfiler,
     OffloadedTensor,
     Tensors,
     copy_model_to_cpu,
@@ -50,7 +53,10 @@ from prime_rl.utils.utils import clean_exit, to_col_format
 def train(config: RLTrainerConfig):
     # Setup world and logger
     world = get_world()
-    logger = setup_logger(config.log, world)
+    logger = setup_logger(
+        config.log.level,
+        log_file=config.output_dir / "logs" / "trainer" / f"rank_{world.rank}.log" if config.log.file else None,
+    )
     logger.info(f"Starting RL trainer in {world}")
 
     # Print warning if running in benchmark mode
@@ -58,8 +64,8 @@ def train(config: RLTrainerConfig):
         logger.warning(f"Running in benchmark mode (max_steps={config.max_steps})")
 
     # Setup the monitor
-    logger.info(f"Initializing monitor ({config.monitor})")
-    monitor = setup_monitor(config.monitor, output_dir=config.output_dir, run_config=config)
+    logger.info(f"Initializing monitor ({config.wandb})")
+    monitor = setup_monitor(config.wandb, output_dir=config.output_dir, run_config=config)
 
     # Set precision
     setup_torch_distributed()
@@ -84,13 +90,15 @@ def train(config: RLTrainerConfig):
     optimizer = setup_optimizer(config.optim, model, parallel_dims.world_mesh["dp_shard_cp"])
 
     # Set up the learning rate scheduler
-    scheduler = setup_scheduler(optimizer, config.scheduler, config.max_steps)
+    scheduler = setup_scheduler(optimizer, config.scheduler, config.max_steps, config.optim.lr)
     logger.info(f"Using `{config.scheduler.type}` scheduler ({config.scheduler})")
 
-    # Get checkpoint managers
+    # Set up weight checkpoint manager
     logger.info(f"Initializing weight checkpoint manager ({config.weights})")
     weight_ckpt_manager = setup_weight_ckpt_manager(config.output_dir, config.weights, config.ckpt, config.async_level)
+    assert weight_ckpt_manager is not None, "Weight checkpoint manager must be set on RL trainer"
 
+    # Set up checkpoint manager
     logger.info(f"Initializing checkpoint manager ({config.ckpt})")
     ckpt_manager = setup_ckpt_manager(config.output_dir, config.ckpt)
 
@@ -133,7 +141,15 @@ def train(config: RLTrainerConfig):
 
     logger.info(f"Starting training loop ({config.max_steps=})")
     is_first_step = True
+    maybe_record_function = nullcontext
+    if config.trace_path:
+        logger.info(f"Tracing to {config.trace_path}")
+        prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True).__enter__()
+        maybe_record_function = record_function
     while True:
+        # Reset peak memory stats
+        torch.cuda.reset_peak_memory_stats()
+
         # Save the weight checkpoint (if we are not at the first step, because no updates to the model have been made yet)
         save_weights_time = 0
         if progress.step > 0:
@@ -209,7 +225,7 @@ def train(config: RLTrainerConfig):
                     temperature = micro_batch["temperature"]
 
                     # Compute the logprobs
-                    logits = forward(logprob_model, input_ids, position_ids).contiguous()
+                    logits = forward(logprob_model, input_ids, position_ids).float().contiguous()
                     shifted_logits = shift_logits(logits)
                     shifted_logits = shifted_logits / temperature
                     recomputed_logprobs = selective_log_softmax(shifted_logits, input_ids)
@@ -228,8 +244,9 @@ def train(config: RLTrainerConfig):
             compute_logprobs_time = time.time() - compute_logprobs_start_time
             logger.debug(f"Recomputed logprobs in {compute_logprobs_time:.2f} seconds")
 
-        if config.profile_path and world.rank == 0:
-            torch.cuda.memory._record_memory_history()
+        memory_profiler = None
+        if config.memory_profiler_path is not None:
+            memory_profiler = MemoryProfiler(progress.step, config.memory_profiler_path)
 
         forward_backward_start_time = time.time()
         micro_batch_size, seq_len = micro_batches[0]["input_ids"].shape
@@ -253,7 +270,8 @@ def train(config: RLTrainerConfig):
             micro_batch_size, seq_len = input_ids.shape
 
             # Forward pass
-            logits = forward(model, input_ids, position_ids).contiguous()
+            with maybe_record_function("forward"):
+                logits = forward(model, input_ids, position_ids).float().contiguous()
             shifted_logits = shift_logits(logits)
             shifted_logits = shifted_logits / temperature
             logprobs = selective_log_softmax(shifted_logits, input_ids)
@@ -277,7 +295,8 @@ def train(config: RLTrainerConfig):
             del logits, shifted_logits
 
             # Backward pass
-            loss.backward()
+            with maybe_record_function("backward"):
+                loss.backward()
 
             # Add relevant tensors to tensor dict for logging purposes
             tensors["probs"].append(torch.exp(logprobs)[loss_mask].detach().to("cpu"))
@@ -291,7 +310,8 @@ def train(config: RLTrainerConfig):
             if is_tt_moe_model(model):
                 load_balance_stats = get_load_balance_stats(model)
                 for k, v in load_balance_stats.items():
-                    tensors[k].append(v)
+                    if v is not None:
+                        tensors[k].append(v)
 
             # Add loss tensors to tensor dict for logging purposes
             for key, loss_tensor in loss_tensors.items():
@@ -299,7 +319,7 @@ def train(config: RLTrainerConfig):
                 tensors[key].append(loss_tensor)
 
             # Debug log with *local, micro step* stats
-            micro_step_message = f"Micro Step {micro_step} | Loss: {tensors['loss'][-1].mean().item():.4f} | Entropy: {tensors['entropy'][-1].mean().item():.4f} | Importance Ratio: {tensors['importance_ratio'][-1].mean().item():.4f}"
+            micro_step_message = f"Micro Step {micro_step}/{len(micro_batches)} | Loss: {tensors['loss'][-1].mean().item():.4f} | Entropy: {tensors['entropy'][-1].mean().item():.4f} | Importance Ratio: {tensors['importance_ratio'][-1].mean().item():.4f}"
             if "max_vio" in tensors:
                 micro_step_message += f" | Max Vio: {tensors['max_vio'][-1].mean().item():.4f}"
             logger.debug(micro_step_message)
@@ -312,6 +332,7 @@ def train(config: RLTrainerConfig):
         optimizer.zero_grad()
 
         # Update learning rate scheduler
+        current_lr = optimizer.param_groups[0]["lr"]
         scheduler.step()
 
         forward_backward_time = time.time() - forward_backward_start_time
@@ -322,13 +343,8 @@ def train(config: RLTrainerConfig):
         weight_ckpt_manager.maybe_clean(progress.step)
 
         # Optionally, dump memory snapshot
-        if config.profile_path and progress.step == 2 and world.rank == 0:
-            logger.debug("Dumping memory snapshot")
-            profile_path = config.profile_path
-            if not profile_path.suffix == ".pickle":
-                profile_path = profile_path.with_suffix(".pickle")
-            torch.cuda.memory._dump_snapshot(profile_path.as_posix())
-            torch.cuda.memory._record_memory_history(enabled=None)
+        if memory_profiler is not None:
+            memory_profiler.step()
 
         # Synchronize the tensor metrics across all steps and ranks
         tensor_stats = tensors.compute_stats()
@@ -343,11 +359,11 @@ def train(config: RLTrainerConfig):
         perf_counter.count_tokens(num_tokens)
         throughput = perf_counter.get_tokens_per_second() or 0
         mfu = perf_counter.get_mfu() or 0
+        peak_memory = torch.cuda.max_memory_allocated() / 1024**3  # GiB
 
         # Log step metrics
         step_time = time.time() - step_start_time
-        current_lr = optimizer.param_groups[0]["lr"]
-        step_message = f"Step {progress.step} | Time: {step_time:.2f}s | Loss: {tensor_stats['loss/mean']:.4f} | Entropy: {tensor_stats['entropy/mean']:.4f} | Importance Ratio: {tensor_stats['importance_ratio/mean']:.4f} | Grad. Norm: {grad_norm:.4f} | LR: {current_lr:.2e} | Throughput: {throughput:.0f} tokens/s | MFU: {mfu:.1f}%"
+        step_message = f"Step {progress.step} | Time: {step_time:.2f}s | Loss: {tensor_stats['loss/mean']:.4f} | Entropy: {tensor_stats['entropy/mean']:.4f} | Importance Ratio: {tensor_stats['importance_ratio/mean']:.4f} | Grad. Norm: {grad_norm:.4f} | LR: {current_lr:.2e} | Throughput: {throughput:.0f} tokens/s | MFU: {mfu:.1f}% | Peak Mem.: {peak_memory:.1f} GiB"
         if "max_vio/mean" in tensor_stats:
             step_message += f" | Max Vio: {tensor_stats['max_vio/mean']:.4f}"
         logger.success(step_message)
@@ -355,7 +371,9 @@ def train(config: RLTrainerConfig):
         # Log performance metrics
         perf_metrics = {
             "perf/throughput": throughput,
+            "perf/throughput_per_gpu": throughput / world.world_size,
             "perf/mfu": mfu,
+            "perf/peak_memory": peak_memory,
             "iter": progress.step,
         }
         monitor.log(perf_metrics)
@@ -386,21 +404,26 @@ def train(config: RLTrainerConfig):
         monitor.log(time_metrics)
 
         # Log distributions to W&B table if enabled
-        if monitor.wandb:
-            assert all(len(tensors) == 1 for tensors in tensors.values()), "Tensors must be lists of length 1"
-            distributions = {key: tensors[key][0] for key in tensors.keys()}
-            monitor.wandb.log_distributions(
-                distributions=distributions,
-                step=progress.step,
-            )
+        assert all(len(tensors) == 1 for tensors in tensors.values()), "Tensors must be lists of length 1"
+        distributions = {key: tensors[key][0] for key in tensors.keys()}
+        monitor.log_distributions(
+            distributions=distributions,
+            step=progress.step,
+        )
 
         progress.step += 1
         is_first_step = False
 
+    if config.trace_path:
+        prof.__exit__(None, None, None)
+        config.trace_path.mkdir(parents=True, exist_ok=True)
+        trace_file = str(config.trace_path / f"trace_{dist.get_rank()}.json.gz")
+        logger.info(f"Saving trace to {trace_file}")
+        prof.export_chrome_trace(trace_file)
+        logger.info(f"Saved trace to {trace_file}")
+
     # Log final (immutable) distributions to W&B table
-    if monitor.wandb:
-        logger.info("Logging final distributions as W&B table")
-        monitor.wandb.log_final_distributions()
+    monitor.log_final_distributions()
 
     # Write final checkpoint
     if ckpt_manager is not None:
@@ -408,7 +431,7 @@ def train(config: RLTrainerConfig):
         ckpt_manager.save(model, [optimizer], scheduler, progress, step=progress.step)
         ckpt_manager.maybe_clean()
 
-    logger.info(f"Peak memory: {torch.cuda.max_memory_allocated() / 1024**3:.2f} GB")
+    logger.info(f"Peak memory: {max(to_col_format(monitor.history)['perf/peak_memory']):.1f} GiB")
     logger.success("RL trainer finished!")
 
     # Optionally, print benchmark table

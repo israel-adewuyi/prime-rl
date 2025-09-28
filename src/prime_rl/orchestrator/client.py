@@ -31,7 +31,7 @@ def setup_client(client_config: ClientConfig) -> AsyncOpenAI:
 async def check_health(client: AsyncOpenAI, interval: int = 1, log_interval: int = 10, timeout: int = 1800) -> None:
     logger = get_logger()
     wait_time = 0
-    url = str(client.base_url)[:-4] + "/health"
+    url = str(client.base_url).strip()[:-4] + "/health"
     logger.debug(f"Starting pinging {url} to check health")
     while wait_time < timeout:
         try:
@@ -39,9 +39,7 @@ async def check_health(client: AsyncOpenAI, interval: int = 1, log_interval: int
             logger.debug(f"Inference pool is ready after {wait_time} seconds")
             return
         except NotFoundError:
-            logger.warning(
-                f"The route {url} does not exist. This likely means you are not using a vLLM server. Skipping health check."
-            )
+            logger.warning(f"The route {url} does not exist. Skipping health check.")
             return
         except Exception as e:
             if wait_time % log_interval == 0 and wait_time > 0:
@@ -65,28 +63,24 @@ async def check_has_model(client: AsyncOpenAI, model_name: str) -> None:
 async def update_weights(client: AsyncOpenAI, path: Path, step: int) -> None:
     """Make a HTTP post request to the vLLM server to update the weights."""
     logger = get_logger()
-    url = str(client.base_url)[:-4] + "/update_weights"
+    url = str(client.base_url).strip()[:-4] + "/update_weights"
     try:
         model_path = get_weight_ckpt_model_path(path, step).absolute()
         logger.debug(f"Sending request to {url} to update weights from {model_path}")
         await client.post(url, cast_to=Response, body={"model_path": model_path.as_posix()})
     except NotFoundError:
-        logger.warning(
-            f"The route {url} does not exist. This likely means you are not using a vLLM server. Skipping weight update."
-        )
+        logger.warning(f"The route {url} does not exist. Skipping weight update.")
         return
 
 
 async def reload_weights(client: AsyncOpenAI) -> None:
     """Make a HTTP post request to the vLLM server to reload weights (reset to base model)."""
     logger = get_logger()
-    url = str(client.base_url)[:-4] + "/reload_weights"
+    url = str(client.base_url).strip()[:-4] + "/reload_weights"
     try:
         logger.debug(f"Sending request to {url} to reload weights (reset to base model)")
         await client.post(url, cast_to=Response, body={})
     except NotFoundError:
-        logger.warning(
-            f"The route {url} does not exist. This likely means you are not using a vLLM server. Skipping weight reload."
-        )
+        logger.warning(f"The route {url} does not exist. Skipping weight reload.")
         return
     await client.post(url, cast_to=Response, body={})

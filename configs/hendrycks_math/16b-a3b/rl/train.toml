@@ -1,0 +1,13 @@
+## to run on 8H200
+recompute_logprobs = false
+
+[wandb]
+
+[model]
+name = "moonshotai/Moonlight-16B-A3B-Instruct"
+trust_remote_code = true
+
+[model.ac]
+
+[optim]
+lr = 1e-6 
