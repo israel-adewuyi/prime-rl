@@ -25,13 +25,9 @@ dependencies = [
     "lovely-tensors>=0.1.18",
     "rich>=14.0.0",
     "tomli-w",
-<<<<<<< HEAD
     "trackio",
     "plotly",
     "verifiers>=0.1.3",
-=======
-    "verifiers>=0.1.4",
->>>>>>> main
     "textarena>=0.6.16",
     "nltk>=3.9.1",
     "math-verify>=0.8.0",
