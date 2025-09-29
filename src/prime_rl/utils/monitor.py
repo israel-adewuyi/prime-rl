@@ -44,6 +44,8 @@ class WandbMonitor:
         self.wandb = wandb.init(
             project=config.project,
             name=config.name,
+            space_id=config.space_id,
+            dataset_id=config.dataset_id,
             resume="allow",
             config=run_config.model_dump() if run_config else None,
         )

@@ -82,6 +82,20 @@ class WandbMonitorConfig(BaseConfig):
 
     offline: Annotated[bool, Field(description="Whether to run W&B in offline mode.")] = False
 
+    space_id: Annotated[
+        str | None, 
+        Field(
+            description="Huggingface spaces to visualize the results."
+        )
+    ] = None
+    
+    dataset_id: Annotated[
+        str | None, 
+        Field(
+            description="Huggingface dataset id to save the logs to"
+        )
+    ]
+    
     # Individual configs (can only be specified on trainer or orchestrator)
     id: Annotated[
         str | None,
