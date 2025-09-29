@@ -376,7 +376,7 @@ async def orchestrate(config: OrchestratorConfig):
             "progress/total_samples": progress.total_samples,
             "progress/total_problems": progress.total_problems,
             "progress/ckpt_step": ckpt_step,  # Shared W&B axis
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(progress_metrics)
 
@@ -385,7 +385,7 @@ async def orchestrate(config: OrchestratorConfig):
             "seq_len/mean": seq_lens.mean(-1).mean().item(),
             "seq_len/max": seq_lens.mean(-1).max().item(),
             "seq_len/min": seq_lens.mean(-1).min().item(),
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(seq_len_metrics)
 
@@ -393,7 +393,7 @@ async def orchestrate(config: OrchestratorConfig):
             "prompt_len/mean": prompt_lens.mean(-1).mean().item(),
             "prompt_len/max": prompt_lens.mean(-1).max().item(),
             "prompt_len/min": prompt_lens.mean(-1).min().item(),
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(prompt_len_metrics)
 
@@ -401,7 +401,7 @@ async def orchestrate(config: OrchestratorConfig):
             "completion_len/mean": completion_lens.mean(-1).mean().item(),
             "completion_len/max": completion_lens.mean(-1).max().item(),
             "completion_len/min": completion_lens.mean(-1).min().item(),
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(completion_len_metrics)
 
@@ -409,7 +409,7 @@ async def orchestrate(config: OrchestratorConfig):
             "is_truncated/mean": is_truncated.mean(-1).mean().item(),
             "is_truncated/max": is_truncated.mean(-1).max().item(),
             "is_truncated/min": is_truncated.mean(-1).min().item(),
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(truncated_metrics)
 
@@ -419,14 +419,14 @@ async def orchestrate(config: OrchestratorConfig):
             "perf/problem_requests": problem_requests,
             "perf/completion_requests": completion_requests,
             "perf/calls_to_generate": calls_to_generate,
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(perf_metrics)
 
         # Log reward metrics to monitor (composite + individual)
         reward_metrics = {
             "reward/mean": rewards.mean().item(),
-            "step": progress.step,
+            "iter": progress.step,
         }
 
         # Add individual reward function metrics
@@ -440,7 +440,7 @@ async def orchestrate(config: OrchestratorConfig):
             "batch/solve_none": solve_none,
             "batch/solve_all": solve_all,
             "batch/effective_batch_size": effective_batch_size,
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(solve_metrics)
 
@@ -452,7 +452,7 @@ async def orchestrate(config: OrchestratorConfig):
             "time/update_weights": update_weights_time,
             "time/save_ckpt": save_ckpt_time,
             "time/eval": eval_time,
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(time_metrics)
 

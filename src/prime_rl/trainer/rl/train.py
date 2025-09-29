@@ -378,7 +378,7 @@ def train(config: RLTrainerConfig):
             "perf/throughput_per_gpu": throughput / world.world_size,
             "perf/mfu": mfu,
             "perf/peak_memory": peak_memory,
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(perf_metrics)
 
@@ -386,12 +386,12 @@ def train(config: RLTrainerConfig):
         optim_metrics = {
             "optim/lr": current_lr,
             "optim/grad_norm": grad_norm.item(),
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(optim_metrics)
 
         # Log tensor stats
-        tensor_stats["step"] = progress.step
+        tensor_stats["iter"] = progress.step
         monitor.log(tensor_stats)
 
         # Log time metrics
@@ -403,7 +403,7 @@ def train(config: RLTrainerConfig):
             "time/save_ckpt": save_ckpt_time,
             "time/compute_logprobs": compute_logprobs_time,
             "time/forward_backward": forward_backward_time,
-            "step": progress.step,
+            "iter": progress.step,
         }
         monitor.log(time_metrics)
 
