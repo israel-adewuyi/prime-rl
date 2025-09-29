@@ -44,11 +44,8 @@ class WandbMonitor:
         self.wandb = wandb.init(
             project=config.project,
             name=config.name,
-            # id=config.id,
-            # dir=output_dir,
             resume="allow",
             config=run_config.model_dump() if run_config else None,
-            # mode="offline" if config.offline else None,
         )
 
         # Optionally, initialize sample logging attributes
