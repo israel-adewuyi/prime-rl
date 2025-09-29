@@ -4,7 +4,7 @@ max_steps = 600
 project = "alphabet-sort"
 dataset_id = "alphabet-sort"
 space_id = "alphabet-sort"
-name = "full_run_1"
+name = "full_run_1.1"
 
 [wandb.log_extras]
 samples = true
