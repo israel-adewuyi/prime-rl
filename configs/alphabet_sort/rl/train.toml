@@ -1,13 +1,21 @@
-max_steps = 500
+max_steps = 100
 
 [wandb]
 project = "alphabet-sort"
+dataset_id = "alphabet-sort"
+space_id = "alphabet-sort"
+name = "testing_full_run"
+
+[wandb.log_extras]
+samples = true
+distributions = false
+interval = 2
 
 [model]
-name = "Qwen/Qwen2.5-3B-Instruct"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [optim]
 lr = 1e-6
 
 [ckpt]
-interval = 100
+interval = 50

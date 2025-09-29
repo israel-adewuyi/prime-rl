@@ -1,19 +1,22 @@
-max_steps = 500
-batch_size = 1024
+max_steps = 100
+batch_size = 64
 micro_batch_size = 1
 seq_len = 2048
 rollouts_per_example = 16
 mask_truncated_completions = false
 
 [model]
-name = "Qwen/Qwen2.5-3B-Instruct"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [wandb]
 project = "alphabet-sort"
+dataset_id = "alphabet-sort"
+space_id = "alphabet-sort"
+name = "testing_full_run"
 
 [wandb.log_extras]
 samples = true
-distributions = true
+distributions = false
 interval = 2
 
 [environment]
@@ -27,4 +30,10 @@ max_turns = 2
 max_tokens = 512
 
 [ckpt]
-interval = 100
+interval = 50
+
+[eval]
+interval = 20
+environment_ids = ["alphabet-sort"]
+rollouts_per_example = [16]
+num_examples = [64]
