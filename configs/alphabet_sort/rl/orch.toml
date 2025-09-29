@@ -1,4 +1,4 @@
-max_steps = 100
+max_steps = 600
 batch_size = 64
 micro_batch_size = 1
 seq_len = 2048
@@ -12,7 +12,7 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 project = "alphabet-sort"
 dataset_id = "alphabet-sort"
 space_id = "alphabet-sort"
-name = "testing_full_run"
+name = "full_run_1"
 
 [wandb.log_extras]
 samples = true
@@ -30,10 +30,11 @@ max_turns = 2
 max_tokens = 512
 
 [ckpt]
-interval = 50
+interval = 100
 
 [eval]
-interval = 20
+interval = 100
 environment_ids = ["alphabet-sort"]
 rollouts_per_example = [16]
-num_examples = [64]
+num_examples = [1024]
+eval_base_model = false

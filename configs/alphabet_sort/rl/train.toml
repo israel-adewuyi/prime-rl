@@ -1,10 +1,10 @@
-max_steps = 100
+max_steps = 600
 
 [wandb]
 project = "alphabet-sort"
 dataset_id = "alphabet-sort"
 space_id = "alphabet-sort"
-name = "testing_full_run"
+name = "full_run_1"
 
 [wandb.log_extras]
 samples = true
@@ -18,4 +18,4 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 lr = 1e-6
 
 [ckpt]
-interval = 50
+interval = 100
