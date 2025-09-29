@@ -176,11 +176,9 @@ class WandbMonitor:
                 assert list(sample.keys()) == self.samples_cols, (
                     "Order of columns in the table must be the same as order of the keys here"
                 )
-                self.samples_table.add_data(*sample.values())
                 self.samples.append(sample)
-        wandb.log({"samples": self.samples_table}, step=step)
         self.last_log_samples_step = step
-        self.logger.debug(f"Logged samples at step {step} to W&B table in {time.time() - start_time:.2f}s")
+        self.logger.debug(f"Collected samples at step {step} for final CSV in {time.time() - start_time:.2f}s")
 
     def log_distributions(self, distributions: dict[str, list[float]], step: int) -> None:
         if not self.is_master:
@@ -222,9 +220,16 @@ class WandbMonitor:
         if not self.config or not self.config.log_extras or not self.config.log_extras.samples:
             return
         self.logger.info("Logging final samples to W&B table")
+        
+        if self.output_dir is None:
+            self.logger.warning("Output directory not set; skipping CSV save")
+            return
         df = pd.DataFrame(self.samples)
-        table = wandb.Table(dataframe=df)
-        wandb.log({"final-samples": table})
+        csv_dir = self.output_dir / f"run-{self.wandb.name}"
+        csv_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = csv_dir / "samples.csv"
+        df.to_csv(csv_path, index=False)
+        self.logger.info(f"Saved {len(self.samples)} samples to {csv_path}")
 
     def log_final_distributions(self) -> None:
         """Log final distributions to W&B table."""
@@ -243,10 +248,10 @@ class WandbMonitor:
             return
         self.logger.info("Saving final summary to file")
         assert self.output_dir is not None, "Output directory is required for saving final summary"
-        dir_path = self.output_dir / f"run-{self.wandb.id}"
+        dir_path = self.output_dir / f"run-{self.wandb.name}"
         dir_path.mkdir(parents=True, exist_ok=True)
-        with open(dir_path / filename, "w") as f:
-            json.dump(wandb.summary._as_dict(), f)
+        # with open(dir_path / filename, "w") as f:
+        #     json.dump(wandb.summary._as_dict(), f)
 
 
 _MONITOR: WandbMonitor | None = None
