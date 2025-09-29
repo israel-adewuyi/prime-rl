@@ -235,7 +235,7 @@ async def run_eval(
     }
     if step is None:
         step = ckpt_step
-    eval_completion_len_metrics.update({"progress/ckpt_step": ckpt_step, "step": step})
+    eval_completion_len_metrics.update({"progress/ckpt_step": ckpt_step, "iter": step})
     monitor.log(eval_completion_len_metrics)
 
     if could_be_binary:
@@ -244,13 +244,13 @@ async def run_eval(
     eval_metrics = {**{f"eval/{eval_id}/{k}": v for k, v in eval_metrics.items()}}
     if step is None:
         step = ckpt_step
-    eval_metrics.update({"progress/ckpt_step": ckpt_step, "step": step})
+    eval_metrics.update({"progress/ckpt_step": ckpt_step, "iter": step})
 
     monitor.log(eval_metrics)
 
     # Log timing metrics to monitor
     time_metrics = {
-        "step": step,
+        "iter": step,
         f"time/eval/{eval_id}": eval_time,
         f"time/eval/{eval_id}/load_environment": load_eval_time,
         f"time/eval/{eval_id}/generate_and_score_rollouts": run_eval_time,
