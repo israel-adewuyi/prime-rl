@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import wandb
+import trackio as wandb
 from transformers.tokenization_utils import PreTrainedTokenizer
 
 from prime_rl.utils.config import WandbMonitorConfig
@@ -44,11 +44,11 @@ class WandbMonitor:
         self.wandb = wandb.init(
             project=config.project,
             name=config.name,
-            id=config.id,
-            dir=output_dir,
+            # id=config.id,
+            # dir=output_dir,
             resume="allow",
             config=run_config.model_dump() if run_config else None,
-            mode="offline" if config.offline else None,
+            # mode="offline" if config.offline else None,
         )
 
         # Optionally, initialize sample logging attributes
