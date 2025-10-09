@@ -283,11 +283,24 @@ class MemoryProfiler:
 
 
 class GradientAccumulator:
-    def __init__(self, beta: float, epsilon: float, save_interval: int, output_dir, model: nn.Module):
+    def __init__(
+        self,
+        beta: float,
+        epsilon: float,
+        save_interval: int,
+        output_dir,
+        model: nn.Module,
+        tolerance: float = 1e-5,
+        save_masks: bool = True,
+        mask_save_interval: int = None,
+    ):
         self.beta = beta
         self.epsilon = epsilon
         self.interval = save_interval
         self.output_dir = Path(output_dir)
+        self.mask_tolerance = tolerance
+        self.save_masks = save_masks
+        self.mask_save_interval = mask_save_interval or save_interval
 
         # Initialize accumulator
         self.acc = OrderedDict()
@@ -299,6 +312,37 @@ class GradientAccumulator:
                 hf_name = next(iter(hf_name))
 
                 self.acc[hf_name] = torch.zeros_like(param.data, requires_grad=False, device="cpu")
+
+    def _compute_masks(self) -> OrderedDict:
+        """Generate boolean masks based on gradient magnitudes."""
+        masks = OrderedDict()
+        for name, grad_ema in self.acc.items():
+            # Create boolean mask: True if gradient magnitude > tolerance, False otherwise
+            mask = grad_ema > self.mask_tolerance
+            masks[name] = mask
+        return masks
+
+    def _compute_mask_stats(self, masks: OrderedDict) -> dict[str, float]:
+        """Compute statistics about mask sparsity."""
+        total_params = 0
+        active_params = 0
+
+        for name, mask in masks.items():
+            layer_total = mask.numel()
+            layer_active = mask.sum().item()
+
+            total_params += layer_total
+            active_params += layer_active
+
+        active_fraction = active_params / total_params if total_params > 0 else 0.0
+        sparsity = 1.0 - active_fraction
+
+        return {
+            "grad_mask/active_fraction": active_fraction,
+            "grad_mask/active_count": active_params,
+            "grad_mask/total_count": total_params,
+            "grad_mask/sparsity": sparsity,
+        }
 
     def step(self, model: nn.Module, step: int, monitor, logger):
         # Accumulate EMA of squared gradients
@@ -319,13 +363,49 @@ class GradientAccumulator:
             self.save(acc_path)
             logger.info(f"Saved gradient EMA to {acc_path}")
 
-    def save(self, path):
+        # Compute and save masks if enabled
+        if self.save_masks and step % self.mask_save_interval == 0 and step > 0:
+            masks = self._compute_masks()
+            mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}.pt"
+            self._save_masks(mask_path, masks)
+            logger.info(f"Saved gradient masks to {mask_path}")
+
+    def save(self, path, save_mask: bool = False):
+        """Save gradient accumulation. Optionally save masks alongside gradients."""
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.acc, path)
+
+        if save_mask and self.save_masks:
+            # Save masks with similar filename pattern
+            mask_path = path.parent / f"{path.stem.replace('grad_ema', 'grad_mask')}{path.suffix}"
+            masks = self._compute_masks()
+            self._save_masks(mask_path, masks)
+
+    def _save_masks(self, path, masks: OrderedDict):
+        """Save boolean masks to disk."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(masks, path)
+
+    def load_masks(self, path) -> OrderedDict:
+        """Load boolean masks from disk."""
+        return torch.load(path, map_location="cpu")
 
     def log(self, step: int, monitor, logger):
         # Compute global mean RMS for logging
         rms_values = [torch.sqrt(self.acc[name] + self.epsilon).mean() for name in self.acc]
         global_rms = torch.stack(rms_values).mean().item()
+
+        # Compute mask statistics
+        masks = self._compute_masks()
+        mask_stats = self._compute_mask_stats(masks)
+
+        # Log gradient EMA
         logger.info(f"Step {step} | EMA RMS Mean: {global_rms:.4f}")
         monitor.log({"grad_ema/rms_mean": global_rms, "step": step})
+
+        # Log mask statistics
+        logger.info(
+            f"Step {step} | Active Fraction: {mask_stats['grad_mask/active_fraction']:.4f} | Sparsity: {mask_stats['grad_mask/sparsity']:.4f}"
+        )
+        mask_stats["step"] = step
+        monitor.log(mask_stats)

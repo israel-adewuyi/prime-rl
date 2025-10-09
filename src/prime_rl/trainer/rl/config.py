@@ -51,25 +51,19 @@ class DataLoaderConfig(BaseConfig):
 
 class GradientAccumulatorConfig(BaseConfig):
     """Configures the gradient accumulator class"""
-    
-    beta: Annotated[
-        float,
-        Field(
-            description="Decay rate of previous gradient"
-        )
-    ] = 0.99
-    epsilon: Annotated[
-        float,
-        Field(
-            description="epsilon term for numeric stability when logging"
-        )
-    ] = 1e-8
-    save_interval: Annotated[
-        int, 
-        Field(
-            description="How often should the current accumulated grad be saved? "
-        )
-    ] = 1
+
+    beta: Annotated[float, Field(description="Decay rate of previous gradient")] = 0.99
+    epsilon: Annotated[float, Field(description="epsilon term for numeric stability when logging")] = 1e-8
+    save_interval: Annotated[int, Field(description="How often should the current accumulated grad be saved? ")] = 1
+    tolerance: Annotated[
+        float, Field(description="Threshold for determining if a parameter is active (for masking)")
+    ] = 1e-5
+    save_masks: Annotated[bool, Field(description="Whether to save binary masks alongside gradient accumulations")] = (
+        True
+    )
+    mask_save_interval: Annotated[
+        int | None, Field(description="How often should masks be saved? If None, uses save_interval")
+    ] = None
 
 
 class RLTrainerConfig(BaseSettings):
@@ -98,7 +92,7 @@ class RLTrainerConfig(BaseSettings):
 
     # The gradient accumulation config
     grad_acc: GradientAccumulatorConfig | None = None
-    
+
     # The logging configuration
     log: LogConfig = LogConfig()
 
@@ -184,11 +178,7 @@ class RLTrainerConfig(BaseSettings):
     @model_validator(mode="after")
     def validate_lora_adapter_saving(self):
         if self.weights and self.weights.save_adapter_separately:
-            lora_enabled = (
-                self.model 
-                and self.model.experimental 
-                and self.model.experimental.lora
-            )
+            lora_enabled = self.model and self.model.experimental and self.model.experimental.lora
             if not lora_enabled:
                 raise ValueError(
                     "save_adapter_separately=True requires LoRA to be enabled. "

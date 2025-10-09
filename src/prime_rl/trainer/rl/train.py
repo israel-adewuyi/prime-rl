@@ -89,7 +89,14 @@ def train(config: RLTrainerConfig):
     grad_accumulator = None
     if config.grad_acc is not None:
         grad_accumulator = GradientAccumulator(
-            config.grad_acc.beta, config.grad_acc.epsilon, config.grad_acc.save_interval, config.output_dir, model
+            config.grad_acc.beta,
+            config.grad_acc.epsilon,
+            config.grad_acc.save_interval,
+            config.output_dir,
+            model,
+            config.grad_acc.tolerance,
+            config.grad_acc.save_masks,
+            config.grad_acc.mask_save_interval,
         )
 
     # Set up the optimizer
