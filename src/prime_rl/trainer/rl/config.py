@@ -49,6 +49,29 @@ class DataLoaderConfig(BaseConfig):
     fake: Annotated[FakeDataLoaderConfig | None, Field(description="Whether to use a fake data loader.")] = None
 
 
+class GradientAccumulatorConfig(BaseConfig):
+    """Configures the gradient accumulator class"""
+    
+    beta: Annotated[
+        float,
+        Field(
+            description="Decay rate of previous gradient"
+        )
+    ] = 0.99
+    epsilon: Annotated[
+        float,
+        Field(
+            description="epsilon term for numeric stability when logging"
+        )
+    ] = 1e-8
+    save_interval: Annotated[
+        int, 
+        Field(
+            description="How often should the current accumulated grad be saved? "
+        )
+    ] = 1
+
+
 class RLTrainerConfig(BaseSettings):
     """Configures the RL trainer"""
 
@@ -73,6 +96,9 @@ class RLTrainerConfig(BaseSettings):
     # The weight checkpoint configuration
     weights: WeightCheckpointConfig = WeightCheckpointConfig()
 
+    # The gradient accumulation config
+    grad_acc: GradientAccumulatorConfig | None = None
+    
     # The logging configuration
     log: LogConfig = LogConfig()
 

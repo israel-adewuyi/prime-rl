@@ -1,19 +1,20 @@
-max_steps = 500
-batch_size = 1024
+max_steps = 4
+batch_size = 4
 micro_batch_size = 1
-seq_len = 2048
-rollouts_per_example = 16
+seq_len = 128
+rollouts_per_example = 4
 mask_truncated_completions = false
 
 [model]
-name = "Qwen/Qwen2.5-3B-Instruct"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [wandb]
 project = "alphabet-sort"
+name = "orch/test_run_grad_mask"
 
 [wandb.log_extras]
 samples = true
-distributions = true
+distributions = false
 interval = 2
 
 [environment]
@@ -24,7 +25,16 @@ min_turns = 2
 max_turns = 2
 
 [sampling]
-max_tokens = 512
+max_tokens = 128
 
 [ckpt]
 interval = 100
+
+[eval]
+interval = 100
+environment_ids = ["alphabet-sort"]
+environment_args = { alphabet-sort = { min_turns = 2, max_turns = 2, seed = 42 } }
+max_concurrent = [32]
+rollouts_per_example = [4]
+num_examples = [512]
+eval_base_model = false

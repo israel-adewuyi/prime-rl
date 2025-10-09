@@ -1,13 +1,24 @@
-max_steps = 500
+max_steps = 4
 
 [wandb]
 project = "alphabet-sort"
+name = "train/test_run_grad_mask"
+
+[wandb.log_extras]
+samples = true
+distributions = false
+interval = 2
 
 [model]
-name = "Qwen/Qwen2.5-3B-Instruct"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [optim]
 lr = 1e-6
 
 [ckpt]
 interval = 100
+
+[grad_acc]
+beta = 0.99
+epsilon = 1e-8
+save_interval = 1

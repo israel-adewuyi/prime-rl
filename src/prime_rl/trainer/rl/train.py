@@ -42,6 +42,7 @@ from prime_rl.trainer.utils import (
     wake_up_model_from_cpu,
     print_benchmark,
     get_response_lengths,
+    GradientAccumulator
 )
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.monitor import setup_monitor
@@ -83,6 +84,11 @@ def train(config: RLTrainerConfig):
     logger.info(f"Initializing model and tokenizer ({config.model})")
     model = setup_model(config.model, parallel_dims)
     tokenizer = setup_tokenizer(config.model)
+
+    # Set up the gradient accumulator
+    grad_accumulator = None  
+    if config.grad_acc is not None:  
+        grad_accumulator = GradientAccumulator(config.grad_acc.beta, config.grad_acc.epsilon, config.grad_acc.save_interval, model)
 
     # Set up the optimizer
     logger.info(f"Initializing optimizer ({config.optim})")
@@ -339,6 +345,10 @@ def train(config: RLTrainerConfig):
 
         # Optionally, clip the gradients
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.optim.max_norm).full_tensor()
+
+        # Update gradient accumulator  
+        if grad_accumulator is not None:  
+            grad_accumulator.step(model, progress.step, monitor)
 
         # Update the model parameters
         optimizer.step()
