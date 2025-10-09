@@ -49,6 +49,68 @@ class DebugModelConfig(BaseModel):
     ] = False
 
 
+class LoRAConfig(BaseModel):
+    """Configuration for LoRA (Low-Rank Adaptation)."""
+
+    rank: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Rank of the low-rank decomposition matrices.",
+        ),
+    ] = 16
+
+    alpha: Annotated[
+        float,
+        Field(
+            ge=0,
+            description="LoRA scaling parameter.",
+        ),
+    ] = 16.0
+
+    dropout: Annotated[
+        float,
+        Field(
+            ge=0,
+            le=1,
+            description="LoRA dropout rate.",
+        ),
+    ] = 0.0
+
+    target_modules: Annotated[
+        list[str],
+        Field(
+            description="Regex patterns for modules to apply LoRA to.",
+        ),
+    ] = [
+        r".*\.q_proj$",
+        r".*\.k_proj$",
+        r".*\.v_proj$",
+        r".*\.o_proj$",
+        r".*\.gate_proj$",
+        r".*\.up_proj$",
+        r".*\.down_proj$",
+    ]
+
+    modules_to_save: Annotated[
+        list[str],
+        Field(
+            description="Regex patterns for modules to keep fully trainable (not freeze).",
+        ),
+    ] = [r".*embed_tokens$", r".*norm$", r".*layernorm$", r"lm_head$"]
+
+
+class ExperimentalConfig(BaseModel):
+    """Experimental modeling features."""
+
+    lora: Annotated[
+        LoRAConfig | None,
+        Field(
+            description="Whether to apply LoRA to the model. If None, will not apply LoRA.",
+        ),
+    ] = None
+
+
 class ModelConfig(BaseConfig):
     """Configures the model for training."""
 
@@ -163,6 +225,13 @@ class ModelConfig(BaseConfig):
         ),
     ] = DebugModelConfig()
 
+    experimental: Annotated[
+        ExperimentalConfig,
+        Field(
+            description="Experimental modeling features.",
+        ),
+    ] = ExperimentalConfig()
+
     @model_validator(mode="after")
     def _map_model_name_for_moe(self):
         """Map model name if it exists in MOE_MODEL_MAPS."""
@@ -270,8 +339,8 @@ class CheckpointConfig(BaseConfig):
     resume_step: Annotated[
         int | None,
         Field(
-            ge=1,
-            description="Step to resume training from. If None, will start from scratch.",
+            ge=-1,
+            description="Step to resume training from. If None, will start from scratch. if -1, will restart from latest checkpoint available.",
         ),
     ] = None
 
@@ -282,6 +351,13 @@ class CheckpointConfig(BaseConfig):
             description="Keep at most this many recent step checkpoints on disk. If None, never clean old checkpoints.",
         ),
     ] = None
+
+    skip_dataloader: Annotated[
+        bool,
+        Field(
+            description="Whether to skip checkpointing the dataloader. If True, will not checkpoint the dataloader.",
+        ),
+    ] = False
 
 
 class WeightCheckpointConfig(BaseConfig):
@@ -301,3 +377,10 @@ class WeightCheckpointConfig(BaseConfig):
             description="Whether to save the weight checkpoint asynchronously.",
         ),
     ] = True
+
+    save_adapter_separately: Annotated[
+        bool,
+        Field(
+            description="Whether to save LoRA adapters separately before merging into full model weights.",
+        ),
+    ] = False

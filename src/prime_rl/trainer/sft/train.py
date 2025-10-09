@@ -1,5 +1,6 @@
 import time
 from contextlib import nullcontext
+from datetime import timedelta
 
 # Import environment before any other imports
 # ruff: noqa: I001
@@ -58,7 +59,7 @@ def train(config: SFTTrainerConfig):
     monitor = setup_monitor(config.wandb, output_dir=config.output_dir, run_config=config)
 
     # Set precision
-    setup_torch_distributed()
+    setup_torch_distributed(timeout=timedelta(seconds=config.dist_timeout_seconds))
     torch.set_float32_matmul_precision("high")
 
     # Initialize parallel dimensions
@@ -79,7 +80,13 @@ def train(config: SFTTrainerConfig):
 
     # Set up weight checkpoint manager
     logger.info(f"Initializing weight checkpoint manager ({config.weights})")
-    weight_ckpt_manager = setup_weight_ckpt_manager(config.output_dir, config.weights, config.ckpt, async_level=0)
+    weight_ckpt_manager = setup_weight_ckpt_manager(
+        config.output_dir,
+        config.weights,
+        config.ckpt,
+        0,
+        config.model.experimental.lora
+    )
 
     # Set up checkpoint manager
     logger.info(f"Initializing checkpoint manager ({config.ckpt})")
@@ -232,7 +239,7 @@ def train(config: SFTTrainerConfig):
                         batch_max_vio += max_vio / grad_accum_steps
 
             # Debug log with *local, micro step* stats
-            micro_step_message = f"Micro Step {micro_step}/{grad_accum_steps} | Loss: {loss.item():.4f} | Dataloader Step: {dataloader.state_dict()['dataset_state']['step']}"
+            micro_step_message = f"Micro Step {micro_step}/{grad_accum_steps} | Loss: {loss.item():.4f} | Dataloader Step: {dataloader.state_dict()['dataset_state']['dataset']['step']}"
             if is_tt_moe_model(model) and max_vio is not None:
                 micro_step_message += f" | Max Vio: {max_vio.item():.4f}"
             logger.debug(micro_step_message)
@@ -261,7 +268,7 @@ def train(config: SFTTrainerConfig):
         # Compute step metrics
         num_tokens = config.data.batch_size * config.data.seq_len
         progress.total_tokens += num_tokens
-        progress.total_samples = dataloader.state_dict()["dataset_state"]["step"]
+        progress.total_samples = dataloader.state_dict()["dataset_state"]["dataset"]["step"]
         perf_counter = get_perf_counter(model, config.data.seq_len)
         perf_counter.count_tokens(num_tokens)
         throughput = perf_counter.get_tokens_per_second() or 0

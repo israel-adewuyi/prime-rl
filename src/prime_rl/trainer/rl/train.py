@@ -1,6 +1,7 @@
 from contextlib import nullcontext
 import time
 from copy import deepcopy
+from datetime import timedelta
 
 # Import environment before any other imports
 # ruff: noqa: I001
@@ -68,7 +69,7 @@ def train(config: RLTrainerConfig):
     monitor = setup_monitor(config.wandb, output_dir=config.output_dir, run_config=config)
 
     # Set precision
-    setup_torch_distributed()
+    setup_torch_distributed(timeout=timedelta(seconds=config.dist_timeout_seconds))
     torch.set_float32_matmul_precision("high")
 
     # Initialize parallel dimensions
@@ -85,7 +86,7 @@ def train(config: RLTrainerConfig):
 
     # Set up the optimizer
     logger.info(f"Initializing optimizer ({config.optim})")
-    logger.info(f"Using `{config.loss.type}` loss ({config.loss})")
+    logger.info(f"Using `{config.loss.ratio_type}` importance ratio ({config.loss})")
 
     optimizer = setup_optimizer(config.optim, model, parallel_dims.world_mesh["dp_shard_cp"])
 
@@ -95,7 +96,13 @@ def train(config: RLTrainerConfig):
 
     # Set up weight checkpoint manager
     logger.info(f"Initializing weight checkpoint manager ({config.weights})")
-    weight_ckpt_manager = setup_weight_ckpt_manager(config.output_dir, config.weights, config.ckpt, config.async_level)
+    weight_ckpt_manager = setup_weight_ckpt_manager(
+        config.output_dir,
+        config.weights,
+        config.ckpt,
+        config.async_level,
+        config.model.experimental.lora
+    )
     assert weight_ckpt_manager is not None, "Weight checkpoint manager must be set on RL trainer"
 
     # Set up checkpoint manager
@@ -253,18 +260,17 @@ def train(config: RLTrainerConfig):
         batch_size = micro_batch_size * num_micro_batches
 
         # Normalize by the local number of unmasked tokens in the batch (per-batch length normalization)
-        if config.loss.norm_type == "token":
+        if config.loss.ratio_type == "token":
             loss_scale = sum(micro_batch["loss_mask"].sum().item() for micro_batch in micro_batches)
-        elif config.loss.norm_type == "sequence":
+        elif config.loss.ratio_type == "sequence":
             loss_scale = batch_size
 
         logger.info(f"Starting forward and backward pass ({num_micro_batches=})")
         tensors = Tensors()  # Used to accumulate tensor statistics across micro-batches and ranks for logging
         for micro_step, micro_batch in enumerate(micro_batches):
-            
             # we only all reduce at the last grad acc step
             model.set_requires_all_reduce(micro_step == len(micro_batches) - 1)
-            
+
             input_ids = micro_batch["input_ids"].to("cuda")
             position_ids = micro_batch["position_ids"].to("cuda")
             advantages = micro_batch["advantages"].to("cuda")
@@ -319,7 +325,10 @@ def train(config: RLTrainerConfig):
 
             # Add loss tensors to tensor dict for logging purposes
             for key, loss_tensor in loss_tensors.items():
-                loss_tensor = loss_tensor.detach()[loss_mask.squeeze()].detach().to("cpu")
+                if config.loss.ratio_type == "sequence":
+                    loss_tensor = loss_tensor.detach().to("cpu")
+                else:
+                    loss_tensor = loss_tensor.detach()[loss_mask.squeeze()].detach().to("cpu")
                 tensors[key].append(loss_tensor)
 
             # Debug log with *local, micro step* stats
