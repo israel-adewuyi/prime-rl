@@ -108,7 +108,7 @@ class WeightInvestigator:
         tolerance: float = 1e-5
     ) -> Tuple[Int, Int]:
         """Given a tranformer module tensor, return the total number of params as well as the number of non_zero diffs"""
-        diff = module_a - module_b
+        diff = abs(module_a - module_b)
         num_non_zero = (diff > tolerance).int().sum()
 
         tensor_shape = list(diff.shape)
