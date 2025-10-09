@@ -10,7 +10,14 @@ from torch.distributed.checkpoint.state_dict import _get_fqns as get_fqns
 from torch.distributed.tensor import DTensor
 from transformers.tokenization_utils import PreTrainedTokenizer
 
-from prime_rl.trainer.config import CheckpointConfig
+from prime_rl.trainer.config import CheckpointConfig, LoRAConfig
+from prime_rl.trainer.lora import (
+    clean_lora_state_dict,
+    has_lora_layers,
+    merge_lora_weights_inplace,
+    restore_lora_weights_inplace,
+    save_lora_config,
+)
 from prime_rl.trainer.rl.config import WeightCheckpointConfig
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.logger import get_logger
@@ -44,13 +51,24 @@ def _convert_tt_moe_to_hf_(state_dict: dict[str, Tensor]):
         if f"model.layers.{i}.mlp.shared_expert.w1" in state_dict:
             state_dict[f"model.layers.{i}.mlp.shared_experts.gate_proj.weight"] = state_dict[
                 f"model.layers.{i}.mlp.shared_expert.w1"
-            ][0]
+            ]
             state_dict[f"model.layers.{i}.mlp.shared_experts.down_proj.weight"] = state_dict[
                 f"model.layers.{i}.mlp.shared_expert.w2"
-            ][0]
+            ]
             state_dict[f"model.layers.{i}.mlp.shared_experts.up_proj.weight"] = state_dict[
                 f"model.layers.{i}.mlp.shared_expert.w3"
-            ][0]
+            ]
+
+            if state_dict[f"model.layers.{i}.mlp.shared_experts.up_proj.weight"].shape[0] == 1:
+                state_dict[f"model.layers.{i}.mlp.shared_experts.up_proj.weight"] = state_dict[
+                    f"model.layers.{i}.mlp.shared_experts.up_proj.weight"
+                ][0]
+                state_dict[f"model.layers.{i}.mlp.shared_experts.down_proj.weight"] = state_dict[
+                    f"model.layers.{i}.mlp.shared_experts.down_proj.weight"
+                ][0]
+                state_dict[f"model.layers.{i}.mlp.shared_experts.gate_proj.weight"] = state_dict[
+                    f"model.layers.{i}.mlp.shared_experts.gate_proj.weight"
+                ][0]
             del state_dict[f"model.layers.{i}.mlp.shared_expert.w1"]
             del state_dict[f"model.layers.{i}.mlp.shared_expert.w2"]
             del state_dict[f"model.layers.{i}.mlp.shared_expert.w3"]
@@ -80,12 +98,18 @@ class WeightCheckpointManager:
     """Utility class to save and cleanup HF-compatible weight checkpoints."""
 
     def __init__(
-        self, output_dir: Path, config: WeightCheckpointConfig, ckpt_config: CheckpointConfig | None, async_level: int
+        self,
+        output_dir: Path,
+        config: WeightCheckpointConfig,
+        ckpt_config: CheckpointConfig | None,
+        async_level: int,
+        lora_config: LoRAConfig | None = None,
     ):
         self.weights_dir = get_weights_dir(output_dir)
         self.config = config
         self.ckpt_config = ckpt_config
         self.async_level = async_level
+        self.lora_config = lora_config
         self._logger = get_logger()
         self._world = get_world()
         self._is_master = self._world.is_master
@@ -95,34 +119,84 @@ class WeightCheckpointManager:
 
     def _get_step_path(self, step: int) -> Path:
         return get_step_path(self.weights_dir, step)
+        
+    def _get_adapter_state_dict(self, model: nn.Module) -> dict[str, Tensor]:
+        """Get adapter weights with clean keys for PEFT compatibility."""
+        lora_state = {}
+        
+        for key, value in model.state_dict().items():
+            param = dict(model.named_parameters()).get(key)
+            if param is None or not param.requires_grad:
+                continue
+                
+            if isinstance(value, DTensor):
+                value = value.full_tensor()
+            
+            if self._is_master:
+                clean_key = next(iter(get_fqns(model, key)))
+                clean_key = clean_key.replace(".base_layer.", ".")
+                
+                # Add PEFT-expected prefix
+                peft_key = f"base_model.model.{clean_key}"
+                
+                # Add .weight suffix for LoRA parameters if missing
+                if ("lora_A" in peft_key or "lora_B" in peft_key) and not peft_key.endswith(".weight"):
+                    peft_key = f"{peft_key}.weight"
+                
+                lora_state[peft_key] = value.to("cpu", non_blocking=False)
+        
+        torch.distributed.barrier()
+        return lora_state
 
-    def _gather_weights(self, model: nn.Module, dtype: torch.dtype = torch.bfloat16) -> dict[str, Tensor]:
+    def _save_lora_adapters(self, lora_state: dict[str, Tensor], model: nn.Module, step: int):
+        """Save LoRA adapters to separate directory."""
+        adapter_path = self._get_step_path(step) / "lora_adapters"
+        adapter_path.mkdir(parents=True, exist_ok=True)
+
+        torch.save(lora_state, adapter_path / "adapter_model.bin")
+
+        if self.lora_config:
+            save_lora_config(self.lora_config, model, adapter_path)  # Pass model
+
+        self._logger.debug(f"Saved LoRA adapters to {adapter_path}")
+
+    def _gather_weights(
+        self, model: nn.Module, dtype: torch.dtype = torch.bfloat16, has_lora_layers: bool = False
+    ) -> dict[str, Tensor]:
         """Gather distributed weights for weight checkpoint."""
-        start_time = time.time()
-        self._logger.debug("Gathering sharded weights")
+        original_lora_state = None
+        if has_lora_layers:
+            original_lora_state = merge_lora_weights_inplace(model)
 
-        # Suppress torch.distributed warnings during checkpoint saving
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning, module="torch.distributed")
-            warnings.filterwarnings("ignore", category=UserWarning, module="torch.distributed.*")
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning, module="torch.distributed")
+                warnings.filterwarnings("ignore", category=UserWarning, module="torch.distributed.*")
 
-            cpu_state = {}
-            for key, value in model.state_dict().items():
-                if isinstance(value, DTensor):
-                    value = value.to(dtype)
-                    # only gather after the downcast to dtype as it will be faster
-                    value = value.full_tensor()
+                cpu_state = {}
+                for key, value in model.state_dict().items():
+                    if isinstance(value, DTensor):
+                        value = value.to(dtype)
+                        # only gather after the downcast to dtype as it will be faster
+                        value = value.full_tensor()
 
-                if self._is_master:
-                    key = get_fqns(model, key)
-                    assert len(key) == 1
-                    key = next(iter(key))
-                    # TODO(Sami) Blocking to avoid race condition, should make non-blocking long-term tho
-                    cpu_state[key] = value.to("cpu", non_blocking=False)
+                    if self._is_master:
+                        key = get_fqns(model, key)
+                        assert len(key) == 1
+                        key = next(iter(key))
+                        # TODO(Sami) Blocking to avoid race condition, should make non-blocking long-term tho
+                        cpu_state[key] = value.to("cpu", non_blocking=False)
 
-            torch.distributed.barrier()
+                torch.distributed.barrier()
 
-        self._logger.debug(f"Gathered sharded weights in {time.time() - start_time:.2f} seconds")
+        finally:
+            # Always restore original LoRA state, even if gathering fails
+            if original_lora_state is not None:
+                restore_lora_weights_inplace(model, original_lora_state)
+
+        # Always clean up the state dict for HF compatibility
+        if any(".base_layer." in key or "lora_A" in key or "lora_B" in key for key in cpu_state.keys()):
+            cpu_state = clean_lora_state_dict(cpu_state)
 
         return cpu_state
 
@@ -162,7 +236,16 @@ class WeightCheckpointManager:
         dtype: torch.dtype = torch.bfloat16,
     ):
         """Save a HF-compatible weight-only checkpoint for a given step."""
-        cpu_state = self._gather_weights(model, dtype)
+        has_lora = has_lora_layers(model)
+
+        # Save LoRA adapters separately if configured
+        if self.config.save_adapter_separately and has_lora:
+            if self._is_master:
+                lora_state = self._get_adapter_state_dict(model)
+                self._save_lora_adapters(lora_state, model, step)
+            torch.distributed.barrier()
+
+        cpu_state = self._gather_weights(model, dtype, has_lora_layers=has_lora)
         if _has_tt_moe_layers(cpu_state):
             _convert_tt_moe_to_hf_(cpu_state)
 
@@ -220,7 +303,11 @@ def setup_weight_ckpt_manager(
     weight_ckpt_config: WeightCheckpointConfig | None,
     ckpt_config: CheckpointConfig | None,
     async_level: int,
+    lora_config: LoRAConfig | None = None,
 ) -> WeightCheckpointManager | None:
     if weight_ckpt_config is None:
         return None
-    return WeightCheckpointManager(output_dir, weight_ckpt_config, ckpt_config, async_level=async_level)
+    
+    return WeightCheckpointManager(
+        output_dir, weight_ckpt_config, ckpt_config, async_level=async_level, lora_config=lora_config
+    )

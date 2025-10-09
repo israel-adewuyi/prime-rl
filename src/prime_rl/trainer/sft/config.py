@@ -64,6 +64,7 @@ class SFTDataConfig(BaseDataConfig):
     )
     splits: Annotated[list[str], Field(description="Splits to use from the HF dataset.")] = ["train"]
     shuffle: Annotated[bool, Field(description="Whether to shuffle the dataset at the beginning of each epoch.")] = True
+    seed: Annotated[int, Field(description="Random seed to use for shuffling the dataset. We also shuffle at the end of each epoch by adding epoch count to the seed.")] = 0
 
     # Configuring
     loss_mask: LossMaskConfig = LossMaskConfig()
@@ -122,6 +123,13 @@ class SFTTrainerConfig(BaseSettings):
 
     trace_path: Annotated[Path | None, Field(description="Path to write pytorch profiler trace to.")] = None
 
+    dist_timeout_seconds: Annotated[
+        int,
+        Field(
+            description="Timeout in seconds for torch distributed ops. Defaults to 600 seconds.",
+        ),
+    ] = 600
+
     @model_validator(mode="after")
     def auto_setup_bench(self):
         if self.bench:
@@ -179,5 +187,20 @@ class SFTTrainerConfig(BaseSettings):
             ):
                 raise ValueError(
                     "Use a weight checkpoint interval that ensures that a weight checkpoint is saved with every full checkpoint"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_lora_adapter_saving(self):
+        if self.weights and self.weights.save_adapter_separately:
+            lora_enabled = (
+                self.model 
+                and self.model.experimental 
+                and self.model.experimental.lora
+            )
+            if not lora_enabled:
+                raise ValueError(
+                    "save_adapter_separately=True requires LoRA to be enabled. "
+                    "Set model.experimental.lora or disable save_adapter_separately."
                 )
         return self
