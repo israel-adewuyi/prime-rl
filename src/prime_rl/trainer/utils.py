@@ -1,6 +1,6 @@
 import pickle
 import time
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict, defaultdict
 from datetime import timedelta
 from itertools import chain
 from pathlib import Path
@@ -14,9 +14,9 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 from torch import Tensor, nn
+from torch.distributed.checkpoint.state_dict import _get_fqns as get_fqns
 from torch.distributed.tensor import DTensor
 from transformers.tokenization_utils import PreTrainedTokenizer
-from torch.distributed.checkpoint.state_dict import _get_fqns as get_fqns
 
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.logger import get_logger
@@ -281,48 +281,51 @@ class MemoryProfiler:
         )
         self.step_num += 1
 
+
 class GradientAccumulator:
-    def __init__(self, beta: float, epsilon: float, save_interval: int, model: nn.Module):
+    def __init__(self, beta: float, epsilon: float, save_interval: int, output_dir, model: nn.Module):
         self.beta = beta
         self.epsilon = epsilon
         self.interval = save_interval
+        self.output_dir = Path(output_dir)
 
         # Initialize accumulator
         self.acc = OrderedDict()
         for name, param in model.named_parameters():
             if param.requires_grad:
-                # Get HuggingFace-compatible name  
-                hf_name = get_fqns(model, name)  
-                assert len(hf_name) == 1, f"Expected single FQN, got {hf_name}"  
-                hf_name = next(iter(hf_name))  
+                # Get HuggingFace-compatible name
+                hf_name = get_fqns(model, name)
+                assert len(hf_name) == 1, f"Expected single FQN, got {hf_name}"
+                hf_name = next(iter(hf_name))
 
-                self.acc[hf_name] = torch.zeros_like(param.data, requires_grad=False, device='cpu')
+                self.acc[hf_name] = torch.zeros_like(param.data, requires_grad=False, device="cpu")
 
     def step(self, model: nn.Module, step: int, monitor, logger):
         # Accumulate EMA of squared gradients
         for name, param in model.named_parameters():
             if param.requires_grad and param.grad is not None:
-                # Translate to HuggingFace name  
-                hf_name = get_fqns(model, name)  
+                # Translate to HuggingFace name
+                hf_name = get_fqns(model, name)
                 hf_name = next(iter(hf_name))
-                
-                # Compute on GPU, then immediately move to CPU  
-                grad_sq = (param.grad ** 2).detach().to('cpu')
+
+                # Compute on GPU, then immediately move to CPU
+                grad_sq = (param.grad**2).detach().to("cpu")
                 self.acc[hf_name] = self.beta * self.acc[hf_name] + (1 - self.beta) * grad_sq
 
         self.log(step, monitor, logger)
-        
+
         if step % self.interval == 0 and step > 0:
-            acc_path = config.output_dir / f"grad_ema_step_{progress.step}.pt"
+            acc_path = self.output_dir / "grad_acc" / f"grad_ema_step_{step}.pt"
             self.save(acc_path)
             logger.info(f"Saved gradient EMA to {acc_path}")
 
-    def save(self, path):  
-        torch.save(self.acc, path)  
-      
-    def log(self, step: int, monitor, logger):  
-        # Compute global mean RMS for logging  
-        rms_values = [torch.sqrt(self.acc[name] + self.epsilon).mean() for name in self.acc]   
-        global_rms = torch.stack(rms_values).mean().item()  
-        logger.info(f"Step {step} | EMA RMS Mean: {global_rms:.4f}")  
+    def save(self, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self.acc, path)
+
+    def log(self, step: int, monitor, logger):
+        # Compute global mean RMS for logging
+        rms_values = [torch.sqrt(self.acc[name] + self.epsilon).mean() for name in self.acc]
+        global_rms = torch.stack(rms_values).mean().item()
+        logger.info(f"Step {step} | EMA RMS Mean: {global_rms:.4f}")
         monitor.log({"grad_ema/rms_mean": global_rms, "step": step})

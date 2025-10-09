@@ -42,7 +42,7 @@ from prime_rl.trainer.utils import (
     wake_up_model_from_cpu,
     print_benchmark,
     get_response_lengths,
-    GradientAccumulator
+    GradientAccumulator,
 )
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.monitor import setup_monitor
@@ -86,9 +86,11 @@ def train(config: RLTrainerConfig):
     tokenizer = setup_tokenizer(config.model)
 
     # Set up the gradient accumulator
-    grad_accumulator = None  
-    if config.grad_acc is not None:  
-        grad_accumulator = GradientAccumulator(config.grad_acc.beta, config.grad_acc.epsilon, config.grad_acc.save_interval, model)
+    grad_accumulator = None
+    if config.grad_acc is not None:
+        grad_accumulator = GradientAccumulator(
+            config.grad_acc.beta, config.grad_acc.epsilon, config.grad_acc.save_interval, config.output_dir, model
+        )
 
     # Set up the optimizer
     logger.info(f"Initializing optimizer ({config.optim})")
@@ -103,11 +105,7 @@ def train(config: RLTrainerConfig):
     # Set up weight checkpoint manager
     logger.info(f"Initializing weight checkpoint manager ({config.weights})")
     weight_ckpt_manager = setup_weight_ckpt_manager(
-        config.output_dir,
-        config.weights,
-        config.ckpt,
-        config.async_level,
-        config.model.experimental.lora
+        config.output_dir, config.weights, config.ckpt, config.async_level, config.model.experimental.lora
     )
     assert weight_ckpt_manager is not None, "Weight checkpoint manager must be set on RL trainer"
 
@@ -346,8 +344,8 @@ def train(config: RLTrainerConfig):
         # Optionally, clip the gradients
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.optim.max_norm).full_tensor()
 
-        # Update gradient accumulator  
-        if grad_accumulator is not None:  
+        # Update gradient accumulator
+        if grad_accumulator is not None:
             grad_accumulator.step(model, progress.step, monitor, logger)
 
         # Update the model parameters
