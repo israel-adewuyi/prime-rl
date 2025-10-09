@@ -348,7 +348,7 @@ def train(config: RLTrainerConfig):
 
         # Update gradient accumulator  
         if grad_accumulator is not None:  
-            grad_accumulator.step(model, progress.step, monitor)
+            grad_accumulator.step(model, progress.step, monitor, logger)
 
         # Update the model parameters
         optimizer.step()

@@ -295,9 +295,8 @@ class GradientAccumulator:
                 hf_name = get_fqns(model, name)  
                 assert len(hf_name) == 1, f"Expected single FQN, got {hf_name}"  
                 hf_name = next(iter(hf_name))  
-                  
-                self.acc[hf_name] = torch.zeros_like(param.data, requires_grad=False)  
-                # self.acc[name] = torch.zeros_like(param.data, requires_grad=False)
+
+                self.acc[hf_name] = torch.zeros_like(param.data, requires_grad=False, device='cpu')
 
     def step(self, model: nn.Module, step: int, monitor, logger):
         # Accumulate EMA of squared gradients
@@ -307,7 +306,8 @@ class GradientAccumulator:
                 hf_name = get_fqns(model, name)  
                 hf_name = next(iter(hf_name))
                 
-                grad_sq = param.grad ** 2
+                # Compute on GPU, then immediately move to CPU  
+                grad_sq = (param.grad ** 2).detach().to('cpu')
                 self.acc[hf_name] = self.beta * self.acc[hf_name] + (1 - self.beta) * grad_sq
 
         self.log(step, monitor, logger)
