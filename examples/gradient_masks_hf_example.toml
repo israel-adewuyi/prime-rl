@@ -1,0 +1,36 @@
+# Example configuration for gradient masking with Hugging Face Hub integration
+# This configuration demonstrates how to enable gradient masking and upload masks to HF Hub
+
+[grad_acc]
+# Basic gradient accumulation settings
+beta = 0.99                    # EMA decay rate for gradient accumulation
+epsilon = 1e-8                 # Small value for numerical stability
+save_interval = 1000           # How often to save gradient accumulations
+
+# Mask generation settings
+tolerance = 1e-5               # Threshold for determining active parameters
+save_masks = true              # Whether to save boolean masks locally
+mask_save_interval = 1000      # How often to save masks (defaults to save_interval)
+
+# Hugging Face Hub integration
+upload_to_hf = true            # Whether to upload masks to HF Hub
+hf_repo_id = "username/model-gradient-masks"  # HF repository ID for masks
+hf_upload_interval = 2000      # How often to upload to HF (every 2000 steps)
+hf_private = true              # Whether to make the HF repository private
+
+# Example usage:
+# 1. Masks will be saved locally every 1000 steps
+# 2. Masks will be uploaded to HF Hub every 2000 steps
+# 3. Repository will be created automatically if it doesn't exist
+# 4. README will be generated with usage instructions
+
+# To use masks from HF Hub in future training:
+# ```python
+# from prime_rl.trainer.utils import load_masks_from_hf, apply_masks_to_model
+# 
+# # Load masks for step 1000
+# masks = load_masks_from_hf("username/model-gradient-masks", 1000)
+# 
+# # Apply masks to your model
+# apply_masks_to_model(model, masks)
+# ```

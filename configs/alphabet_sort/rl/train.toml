@@ -1,8 +1,8 @@
-max_steps = 4
+max_steps = 10
 
 [wandb]
 project = "alphabet-sort"
-name = "train/test_run_grad_mask"
+name = "train/grad_mask_testing_mask_2"
 
 [wandb.log_extras]
 samples = true
@@ -21,4 +21,7 @@ interval = 100
 [grad_acc]
 beta = 0.99
 epsilon = 1e-8
-save_interval = 1
+save_interval = 2
+upload_to_hf = true
+hf_repo_id = "israel-adewuyi/model-gradient-masks"
+hf_private = true

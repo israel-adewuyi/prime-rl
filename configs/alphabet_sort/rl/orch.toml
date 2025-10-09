@@ -1,4 +1,4 @@
-max_steps = 4
+max_steps = 10
 batch_size = 4
 micro_batch_size = 1
 seq_len = 128
@@ -10,7 +10,7 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [wandb]
 project = "alphabet-sort"
-name = "orch/test_run_grad_mask"
+name = "orch/grad_mask_testing_mask_2"
 
 [wandb.log_extras]
 samples = true
