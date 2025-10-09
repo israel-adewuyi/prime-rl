@@ -293,6 +293,10 @@ class GradientAccumulator:
         tolerance: float = 1e-5,
         save_masks: bool = True,
         mask_save_interval: int = None,
+        upload_to_hf: bool = False,
+        hf_repo_id: str = None,
+        hf_upload_interval: int = None,
+        hf_private: bool = True,
     ):
         self.beta = beta
         self.epsilon = epsilon
@@ -301,6 +305,14 @@ class GradientAccumulator:
         self.mask_tolerance = tolerance
         self.save_masks = save_masks
         self.mask_save_interval = mask_save_interval or save_interval
+        self.upload_to_hf = upload_to_hf
+        self.hf_repo_id = hf_repo_id
+        self.hf_upload_interval = hf_upload_interval or mask_save_interval or save_interval
+        self.hf_private = hf_private
+
+        # Validate HF configuration
+        if self.upload_to_hf and not self.hf_repo_id:
+            raise ValueError("hf_repo_id must be provided when upload_to_hf is True")
 
         # Initialize accumulator
         self.acc = OrderedDict()
@@ -370,6 +382,29 @@ class GradientAccumulator:
             self._save_masks(mask_path, masks)
             logger.info(f"Saved gradient masks to {mask_path}")
 
+            # Upload to Hugging Face Hub if enabled
+            if self.upload_to_hf and step % self.hf_upload_interval == 0:
+                # Get model name from the first parameter (assuming all params have the same base model)
+                model_name = "unknown_model"
+                if self.acc:
+                    first_param_name = next(iter(self.acc.keys()))
+                    # Extract model name from parameter name (e.g., "model.embed_tokens.weight" -> "model")
+                    model_name = first_param_name.split(".")[0] if "." in first_param_name else "model"
+
+                # Prepare repository on first upload
+                if step == self.hf_upload_interval:
+                    if not self._prepare_hf_repo(logger):
+                        logger.warning("Failed to prepare HF repository, skipping upload")
+                        return
+                    self._update_hf_readme(model_name, logger)
+
+                # Create metadata and upload
+                metadata = self._create_mask_metadata(masks, step, model_name)
+                if self._upload_masks_to_hf(masks, metadata, step, logger):
+                    logger.info(f"Successfully uploaded masks for step {step} to HF Hub")
+                else:
+                    logger.warning(f"Failed to upload masks for step {step} to HF Hub")
+
     def save(self, path, save_mask: bool = False):
         """Save gradient accumulation. Optionally save masks alongside gradients."""
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -390,6 +425,175 @@ class GradientAccumulator:
         """Load boolean masks from disk."""
         return torch.load(path, map_location="cpu")
 
+    def _create_mask_metadata(self, masks: OrderedDict, step: int, model_name: str) -> dict:
+        """Create metadata for the masks."""
+        total_params = sum(mask.numel() for mask in masks.values())
+        active_params = sum(mask.sum().item() for mask in masks.values())
+        active_fraction = active_params / total_params if total_params > 0 else 0.0
+
+        return {
+            "step": step,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "tolerance": self.mask_tolerance,
+            "total_parameters": total_params,
+            "active_parameters": active_params,
+            "active_fraction": active_fraction,
+            "sparsity": 1.0 - active_fraction,
+            "base_model": model_name,
+            "beta": self.beta,
+            "epsilon": self.epsilon,
+        }
+
+    def _prepare_hf_repo(self, logger) -> bool:
+        """Prepare HF repository for mask uploads."""
+        try:
+            from huggingface_hub import HfApi, create_repo
+
+            api = HfApi()
+
+            # Check if repo exists, create if it doesn't
+            try:
+                api.repo_info(self.hf_repo_id)
+                logger.info(f"HF repository {self.hf_repo_id} already exists")
+            except Exception:
+                logger.info(f"Creating HF repository {self.hf_repo_id}")
+                create_repo(repo_id=self.hf_repo_id, repo_type="model", private=self.hf_private, exist_ok=True)
+
+            return True
+        except ImportError:
+            logger.error("huggingface_hub not available. Install with: pip install huggingface_hub")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to prepare HF repository: {e}")
+            return False
+
+    def _upload_masks_to_hf(self, masks: OrderedDict, metadata: dict, step: int, logger) -> bool:
+        """Upload masks and metadata to Hugging Face Hub."""
+        try:
+            from huggingface_hub import upload_file
+
+            # api = HfApi()
+
+            # Upload masks file
+            mask_filename = f"masks/step_{step}.pt"
+            mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}.pt"
+
+            if mask_path.exists():
+                logger.info(f"Uploading masks to {self.hf_repo_id}/{mask_filename}")
+                upload_file(
+                    path_or_fileobj=str(mask_path),
+                    path_in_repo=mask_filename,
+                    repo_id=self.hf_repo_id,
+                    repo_type="model",
+                )
+
+            # Upload metadata
+            import json
+            import tempfile
+
+            metadata_filename = f"metadata/step_{step}_info.json"
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+                json.dump(metadata, f, indent=2)
+                temp_path = f.name
+
+            logger.info(f"Uploading metadata to {self.hf_repo_id}/{metadata_filename}")
+            upload_file(
+                path_or_fileobj=temp_path, path_in_repo=metadata_filename, repo_id=self.hf_repo_id, repo_type="model"
+            )
+
+            # Clean up temp file
+            import os
+
+            os.unlink(temp_path)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to upload masks to HF Hub: {e}")
+            return False
+
+    def _update_hf_readme(self, model_name: str, logger) -> bool:
+        """Update or create README for the HF repository."""
+        try:
+            import os
+            import tempfile
+
+            # from huggingface_hub import HfApi, upload_file
+            from huggingface_hub import upload_file
+
+            # api = HfApi()
+
+            # Create README content
+            readme_content = f"""---
+license: mit
+tags:
+- gradient-masks
+- model-sparsity
+- parameter-pruning
+base_model: {model_name}
+---
+
+# Gradient Masks Repository
+
+This repository contains gradient masks generated during training of `{model_name}`.
+
+## Overview
+
+Gradient masks are boolean tensors that indicate which parameters have significant gradients during training. These masks can be used to identify important parameters for fine-tuning or to create sparse models.
+
+## Usage
+
+```python
+from huggingface_hub import hf_hub_download
+import torch
+
+# Download masks for a specific step
+mask_path = hf_hub_download(
+    repo_id="{self.hf_repo_id}",
+    filename="masks/step_1000.pt"
+)
+masks = torch.load(mask_path, map_location="cpu")
+
+# Apply masks to a model
+for name, param in model.named_parameters():
+    if name in masks:
+        mask = masks[name].to(param.device)
+        param.requires_grad = mask  # Set requires_grad based on mask
+```
+
+## Mask Generation
+
+- **Tolerance**: {self.mask_tolerance}
+- **Beta (EMA decay)**: {self.beta}
+- **Epsilon**: {self.epsilon}
+- **Base Model**: {model_name}
+
+## Files
+
+- `masks/step_*.pt`: Boolean masks for each training step
+- `metadata/step_*_info.json`: Metadata about each mask set
+
+## License
+
+This repository is licensed under the MIT License.
+"""
+
+            # Upload README
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+                f.write(readme_content)
+                temp_path = f.name
+
+            logger.info(f"Updating README for {self.hf_repo_id}")
+            upload_file(path_or_fileobj=temp_path, path_in_repo="README.md", repo_id=self.hf_repo_id, repo_type="model")
+
+            # Clean up
+            os.unlink(temp_path)
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update HF README: {e}")
+            return False
+
     def log(self, step: int, monitor, logger):
         # Compute global mean RMS for logging
         rms_values = [torch.sqrt(self.acc[name] + self.epsilon).mean() for name in self.acc]
@@ -409,3 +613,126 @@ class GradientAccumulator:
         )
         mask_stats["step"] = step
         monitor.log(mask_stats)
+
+
+# Utility functions for loading masks from Hugging Face Hub
+
+
+def load_masks_from_hf(repo_id: str, step: int, cache_dir: str = None) -> OrderedDict:
+    """
+    Load gradient masks from Hugging Face Hub.
+
+    Args:
+        repo_id: Hugging Face repository ID containing the masks
+        step: Training step to load masks for
+        cache_dir: Optional cache directory for downloads
+
+    Returns:
+        OrderedDict containing boolean masks for each parameter
+
+    Example:
+        >>> masks = load_masks_from_hf("username/model-gradient-masks", 1000)
+        >>> for name, param in model.named_parameters():
+        ...     if name in masks:
+        ...         mask = masks[name].to(param.device)
+        ...         param.requires_grad = mask
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
+
+    filename = f"masks/step_{step}.pt"
+    mask_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="model", cache_dir=cache_dir)
+
+    return torch.load(mask_path, map_location="cpu")
+
+
+def load_mask_metadata_from_hf(repo_id: str, step: int, cache_dir: str = None) -> dict:
+    """
+    Load metadata for gradient masks from Hugging Face Hub.
+
+    Args:
+        repo_id: Hugging Face repository ID containing the masks
+        step: Training step to load metadata for
+        cache_dir: Optional cache directory for downloads
+
+    Returns:
+        Dictionary containing metadata about the masks
+
+    Example:
+        >>> metadata = load_mask_metadata_from_hf("username/model-gradient-masks", 1000)
+        >>> print(f"Active fraction: {metadata['active_fraction']:.2%}")
+    """
+    try:
+        import json
+
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
+
+    filename = f"metadata/step_{step}_info.json"
+    metadata_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="model", cache_dir=cache_dir)
+
+    with open(metadata_path, "r") as f:
+        return json.load(f)
+
+
+def apply_masks_to_model(model: nn.Module, masks: OrderedDict, device: str = "cuda") -> None:
+    """
+    Apply boolean masks to a model's parameters.
+
+    Args:
+        model: PyTorch model to apply masks to
+        masks: OrderedDict containing boolean masks for each parameter
+        device: Device to move masks to
+
+    Example:
+        >>> masks = load_masks_from_hf("username/model-gradient-masks", 1000)
+        >>> apply_masks_to_model(model, masks)
+    """
+    for name, param in model.named_parameters():
+        if name in masks:
+            mask = masks[name].to(device)
+            param.requires_grad = mask
+            get_logger().debug(f"Applied mask to {name}: {mask.sum().item()}/{mask.numel()} parameters active")
+
+
+def list_available_mask_steps(repo_id: str) -> list[int]:
+    """
+    List all available mask steps in a Hugging Face repository.
+
+    Args:
+        repo_id: Hugging Face repository ID containing the masks
+
+    Returns:
+        List of available step numbers
+
+    Example:
+        >>> steps = list_available_mask_steps("username/model-gradient-masks")
+        >>> print(f"Available steps: {steps}")
+    """
+    try:
+        # from huggingface_hub import HfApi, list_repo_files
+        from huggingface_hub import list_repo_files
+    except ImportError:
+        raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
+
+    try:
+        files = list_repo_files(repo_id, repo_type="model")
+        mask_files = [f for f in files if f.startswith("masks/step_") and f.endswith(".pt")]
+
+        steps = []
+        for file in mask_files:
+            # Extract step number from filename like "masks/step_1000.pt"
+            step_str = file.split("step_")[1].split(".pt")[0]
+            try:
+                steps.append(int(step_str))
+            except ValueError:
+                continue
+
+        return sorted(steps)
+
+    except Exception as e:
+        get_logger().error(f"Failed to list mask steps: {e}")
+        return []

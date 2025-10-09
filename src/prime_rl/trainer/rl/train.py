@@ -97,6 +97,10 @@ def train(config: RLTrainerConfig):
             config.grad_acc.tolerance,
             config.grad_acc.save_masks,
             config.grad_acc.mask_save_interval,
+            config.grad_acc.upload_to_hf,
+            config.grad_acc.hf_repo_id,
+            config.grad_acc.hf_upload_interval,
+            config.grad_acc.hf_private,
         )
 
     # Set up the optimizer

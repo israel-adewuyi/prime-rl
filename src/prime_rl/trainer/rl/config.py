@@ -64,6 +64,12 @@ class GradientAccumulatorConfig(BaseConfig):
     mask_save_interval: Annotated[
         int | None, Field(description="How often should masks be saved? If None, uses save_interval")
     ] = None
+    upload_to_hf: Annotated[bool, Field(description="Whether to upload masks to Hugging Face Hub")] = False
+    hf_repo_id: Annotated[str | None, Field(description="Hugging Face repo ID for uploading masks")] = None
+    hf_upload_interval: Annotated[
+        int | None, Field(description="Upload interval for HF Hub (defaults to mask_save_interval)")
+    ] = None
+    hf_private: Annotated[bool, Field(description="Whether to make HF repo private")] = True
 
 
 class RLTrainerConfig(BaseSettings):
