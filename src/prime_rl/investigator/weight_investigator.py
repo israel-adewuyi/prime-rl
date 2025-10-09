@@ -5,7 +5,7 @@ from jaxtyping import Float, Int
 
 from prime_rl.investigator.config import InvestigatorConfig
 from prime_rl.utils.pydantic_config import parse_argv
-from prime_rl.investigator.logger import setup_logger
+from prime_rl.utils.logger import setup_logger
 from prime_rl.investigator.utils import visualize_sparsity, tensor_to_serializable, get_name_of_run
 
 import os
@@ -21,7 +21,10 @@ class WeightInvestigator:
     def __init__(self, config: None):
         self.config = config
 
-        self.logger = setup_logger(config.log)
+        # self.logger = setup_logger(config.log)
+        self.logger = setup_logger(
+            config.log.level, log_file=config.output_dir / "logs" / "orchestrator.log" if config.log.file else None
+        )
         self.logger.info("Starting investigator")
 
         self.logger.info(f"Loading first model at path {config.checkpoint_path_1}")

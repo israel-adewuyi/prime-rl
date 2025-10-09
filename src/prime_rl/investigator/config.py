@@ -1,7 +1,7 @@
 from pathlib import Path  
 from typing import Annotated  
 from pydantic import Field  
-from prime_rl.utils.config import LogConfig, ModelConfig, MultiMonitorConfig  
+from prime_rl.utils.config import LogConfig, ModelConfig
 from prime_rl.utils.pydantic_config import BaseSettings  
   
 class InvestigatorConfig(BaseSettings):  
