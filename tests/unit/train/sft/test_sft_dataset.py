@@ -24,7 +24,7 @@ def test_raise_error_if_no_prompt_and_completion(build_dummy_dataset):
     """Tests that an error is raised if no prompt and completion are provided but a tokenizer is provided."""
     dataset = build_dummy_dataset("a", 1)
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
-    sft_dataset = SFTDataset(dataset, tokenizer)
+    sft_dataset = SFTDataset(dataset, tokenizer=tokenizer)
     with pytest.raises(ValueError):
         next(iter(sft_dataset))
 
@@ -120,7 +120,12 @@ def test_sft_dataset_state(build_dummy_dataset):
 
 def test_sft_dataset_state_resume(build_dummy_dataset):
     """Tests resuming the dataset from checkpoint in between epochs."""
-    dataset = SFTDataset(build_dummy_dataset("", 4), tokenizer=None, shuffle=False, max_epochs=2)
+    dataset = SFTDataset(
+        build_dummy_dataset("", 4),
+        tokenizer=None,
+        shuffle=False,
+        max_epochs=2,
+    )
     dataiter = iter(dataset)
 
     # Initial state
@@ -136,7 +141,12 @@ def test_sft_dataset_state_resume(build_dummy_dataset):
     # Resuming from checkpoint cross epoch
     state_dict = dataset.state_dict()
     del dataset
-    dataset = SFTDataset(build_dummy_dataset("", 4), tokenizer=None, shuffle=False, max_epochs=2)
+    dataset = SFTDataset(
+        build_dummy_dataset("", 4),
+        tokenizer=None,
+        shuffle=False,
+        max_epochs=2,
+    )
     dataset.load_state_dict(state_dict)
     dataiter = iter(dataset)
 
@@ -150,7 +160,12 @@ def test_sft_dataset_state_resume(build_dummy_dataset):
     # Resuming from checkpoint mid epoch
     state_dict = dataset.state_dict()
     del dataset
-    dataset = SFTDataset(build_dummy_dataset("", 4), tokenizer=None, shuffle=False, max_epochs=2)
+    dataset = SFTDataset(
+        build_dummy_dataset("", 4),
+        tokenizer=None,
+        shuffle=False,
+        max_epochs=2,
+    )
     dataset.load_state_dict(state_dict)
     dataiter = iter(dataset)
 
@@ -179,7 +194,7 @@ def test_multiturn_loss_mask():
         ]
     )
     tokenizer = AutoTokenizer.from_pretrained("PrimeIntellect/Qwen3-0.6B")  # Properly handles multi-turn think
-    dataset = SFTDataset(dataset, tokenizer, max_examples=1)
+    dataset = SFTDataset(dataset, tokenizer=tokenizer, max_examples=1)
     sample = next(iter(dataset))
     print_sample(sample["input_ids"], sample["loss_mask"], tokenizer)
 
@@ -242,6 +257,6 @@ def test_multiturn_loss_mask_with_tools():
 
     dataset = Dataset.from_list([tool_example])
     tokenizer = AutoTokenizer.from_pretrained("PrimeIntellect/Qwen3-0.6B")  # Properly handles multi-turn think
-    dataset = SFTDataset(dataset, tokenizer, max_examples=1)
+    dataset = SFTDataset(dataset, tokenizer=tokenizer, max_examples=1)
     sample = next(iter(dataset))
     print_sample(sample["input_ids"], sample["loss_mask"], tokenizer)
