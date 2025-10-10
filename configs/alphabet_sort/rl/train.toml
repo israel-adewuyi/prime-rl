@@ -1,8 +1,8 @@
-max_steps = 10
+max_steps = 100
 
 [wandb]
 project = "alphabet-sort"
-name = "train/grad_mask_testing_mask_2"
+name = "train/generate_masks"
 
 [wandb.log_extras]
 samples = true
@@ -15,13 +15,10 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 [optim]
 lr = 1e-6
 
-[ckpt]
-interval = 100
-
 [grad_acc]
 beta = 0.99
 epsilon = 1e-8
-save_interval = 2
+save_interval = 5
 upload_to_hf = true
-hf_repo_id = "israel-adewuyi/model-gradient-masks"
+hf_repo_id = "israel-adewuyi/qwen2.5-0.5B-gradient-masks"
 hf_private = true
