@@ -214,7 +214,7 @@ def apply_compile(model: nn.Module, compile_config: CompileConfig):
     get_logger().info(f"Compiled {len(model.model.layers)} layers (fullgraph={compile_config.fullgraph})")
 
 
-def setup_model(config: ModelConfig, parallel_dims: ParallelDims) -> nn.Module:
+def setup_model(config: ModelConfig, parallel_dims: ParallelDims, mask_loading_config=None) -> nn.Module:
     model = get_model(
         config,
         device=torch.device("meta" if config.load_using_meta else "cpu"),
@@ -222,6 +222,21 @@ def setup_model(config: ModelConfig, parallel_dims: ParallelDims) -> nn.Module:
     )
     if config.load_using_meta and not can_load_dcp_from_hf(model):
         model = get_model(config, device=torch.device("cpu"), dtype=DTYPE_MAP[config.optimization_dtype])
+
+    # Load masks if specified (before FSDP setup to preserve parameter names)
+    if mask_loading_config is not None and mask_loading_config.enabled:
+        from prime_rl.trainer.utils import apply_masks_to_model, load_masks_from_hf
+
+        logger = get_logger()
+        logger.info(f"Loading masks from {mask_loading_config.hf_repo_id} step {mask_loading_config.step}")
+
+        try:
+            masks = load_masks_from_hf(mask_loading_config.hf_repo_id, mask_loading_config.step)
+            apply_masks_to_model(model, masks)
+            logger.info("Successfully applied masks to model parameters")
+        except Exception as e:
+            logger.error(f"Failed to load or apply masks: {e}")
+            raise
 
     # Apply LoRA before FSDP setup
     if config.experimental.lora is not None:
