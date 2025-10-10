@@ -1,4 +1,4 @@
-max_steps = 100
+max_steps = 300
 batch_size = 64
 micro_batch_size = 1
 seq_len = 2048
@@ -10,7 +10,7 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [wandb]
 project = "alphabet-sort"
-name = "orch/generate_masks"
+name = "orch/mask_train_mask_step=80"
 
 [wandb.log_extras]
 samples = true
@@ -26,12 +26,3 @@ max_turns = 2
 
 [sampling]
 max_tokens = 512
-
-[eval]
-interval = 100
-environment_ids = ["alphabet-sort"]
-environment_args = { alphabet-sort = { min_turns = 2, max_turns = 2, seed = 42 } }
-max_concurrent = [32]
-rollouts_per_example = [4]
-num_examples = [512]
-eval_base_model = false
