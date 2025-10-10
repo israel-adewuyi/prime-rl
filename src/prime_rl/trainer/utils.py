@@ -648,91 +648,53 @@ def load_masks_from_hf(repo_id: str, step: int, cache_dir: str = None) -> Ordere
     return torch.load(mask_path, map_location="cpu")
 
 
-def load_mask_metadata_from_hf(repo_id: str, step: int, cache_dir: str = None) -> dict:
-    """
-    Load metadata for gradient masks from Hugging Face Hub.
-
-    Args:
-        repo_id: Hugging Face repository ID containing the masks
-        step: Training step to load metadata for
-        cache_dir: Optional cache directory for downloads
-
-    Returns:
-        Dictionary containing metadata about the masks
-
-    Example:
-        >>> metadata = load_mask_metadata_from_hf("username/model-gradient-masks", 1000)
-        >>> print(f"Active fraction: {metadata['active_fraction']:.2%}")
-    """
-    try:
-        import json
-
-        from huggingface_hub import hf_hub_download
-    except ImportError:
-        raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
-
-    filename = f"metadata/step_{step}_info.json"
-    metadata_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="model", cache_dir=cache_dir)
-
-    with open(metadata_path, "r") as f:
-        return json.load(f)
-
-
 def apply_masks_to_model(model: nn.Module, masks: OrderedDict, device: str = "cuda") -> None:
     """
-    Apply boolean masks to a model's parameters.
+    Apply boolean masks to a model's parameters by registering gradient hooks.
+    This enforces per-element sparsity by scaling gradients to zero where mask is False.
 
     Args:
         model: PyTorch model to apply masks to
         masks: OrderedDict containing boolean masks for each parameter
         device: Device to move masks to
-
-    Example:
-        >>> masks = load_masks_from_hf("username/model-gradient-masks", 1000)
-        >>> apply_masks_to_model(model, masks)
     """
+    # Ensure model has a place to store masks (create if needed)
+    if not hasattr(model, '_grad_masks'):
+        model._grad_masks = OrderedDict()
+
+    logger = get_logger()
+    applied_count = 0
+    total_active = 0
+    total_params = 0
+
     for name, param in model.named_parameters():
         if name in masks:
             mask = masks[name].to(device)
-            param.requires_grad = mask
-            get_logger().debug(f"Applied mask to {name}: {mask.sum().item()}/{mask.numel()} parameters active")
+            model._grad_masks[name] = mask
 
+            # Compute stats for logging
+            active = mask.sum().item()
+            total = mask.numel()
+            total_active += active
+            total_params += total
+            applied_count += 1
 
-def list_available_mask_steps(repo_id: str) -> list[int]:
-    """
-    List all available mask steps in a Hugging Face repository.
+            # Register hook to multiply grad by mask during backward
+            def grad_hook_factory(full_name, msk):
+                def hook(grad):
+                    if grad is not None:
+                        # Element-wise multiplication: zeros grad where mask is False
+                        return grad * msk
+                    return grad
+                return hook
 
-    Args:
-        repo_id: Hugging Face repository ID containing the masks
+            param.register_hook(grad_hook_factory(name, mask))
 
-    Returns:
-        List of available step numbers
+            logger.debug(f"Applied mask to {name}: {active}/{total} parameters active ({active/total*100:.1f}%)")
 
-    Example:
-        >>> steps = list_available_mask_steps("username/model-gradient-masks")
-        >>> print(f"Available steps: {steps}")
-    """
-    try:
-        # from huggingface_hub import HfApi, list_repo_files
-        from huggingface_hub import list_repo_files
-    except ImportError:
-        raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
-
-    try:
-        files = list_repo_files(repo_id, repo_type="model")
-        mask_files = [f for f in files if f.startswith("masks/step_") and f.endswith(".pt")]
-
-        steps = []
-        for file in mask_files:
-            # Extract step number from filename like "masks/step_1000.pt"
-            step_str = file.split("step_")[1].split(".pt")[0]
-            try:
-                steps.append(int(step_str))
-            except ValueError:
-                continue
-
-        return sorted(steps)
-
-    except Exception as e:
-        get_logger().error(f"Failed to list mask steps: {e}")
-        return []
+    # Log overall stats
+    if applied_count > 0:
+        active_fraction = total_active / total_params
+        logger.info(f"Applied masks to {applied_count} parameters | Overall active fraction: {active_fraction:.4f} ({total_active}/{total_params})")
+    else:
+        logger.warning("No matching masks found for model parameters")

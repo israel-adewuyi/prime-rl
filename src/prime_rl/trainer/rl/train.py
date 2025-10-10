@@ -82,12 +82,13 @@ def train(config: RLTrainerConfig):
 
     # Initialize the model and tokenizer
     logger.info(f"Initializing model and tokenizer ({config.model})")
-    model = setup_model(config.model, parallel_dims)
+    model = setup_model(config.model, parallel_dims, config.mask_loading)
     tokenizer = setup_tokenizer(config.model)
 
-    # Set up the gradient accumulator
+    # Set up the gradient accumulator (only if saving masks)
     grad_accumulator = None
-    if config.grad_acc is not None:
+    if config.grad_acc is not None and config.grad_acc.save_masks:
+        logger.info(f"Initializing gradient accumulator for mask generation")
         grad_accumulator = GradientAccumulator(
             config.grad_acc.beta,
             config.grad_acc.epsilon,
@@ -102,6 +103,8 @@ def train(config: RLTrainerConfig):
             config.grad_acc.hf_upload_interval,
             config.grad_acc.hf_private,
         )
+    elif config.grad_acc is not None and not config.grad_acc.save_masks:
+        logger.info("Gradient accumulator disabled (save_masks=false)")
 
     # Set up the optimizer
     logger.info(f"Initializing optimizer ({config.optim})")
@@ -139,7 +142,7 @@ def train(config: RLTrainerConfig):
         # Initialize the logprob model
         tensor_offloaded_repository: dict[int, OffloadedTensor] = {}
         logger.info(f"Initializing logprob model ({config.model})")
-        logprob_model = setup_model(config.model, parallel_dims)
+        logprob_model = setup_model(config.model, parallel_dims, None)
 
         # Load async models from weights checkpoint if resuming from checkpoint
         if config.ckpt and config.ckpt.resume_step:
@@ -152,7 +155,7 @@ def train(config: RLTrainerConfig):
                 )
                 model_config = deepcopy(config.model)
                 model_config.name = model_name_or_path
-                logprob_model = setup_model(model_config, parallel_dims)
+                logprob_model = setup_model(model_config, parallel_dims, None)
                 tensor_offloaded_repository[step] = offload_model_to_cpu(logprob_model)
 
     # Set up the data loader (Optionally, use a fake data loader for debugging)
