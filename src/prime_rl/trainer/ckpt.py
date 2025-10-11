@@ -144,17 +144,20 @@ class CheckpointManager:
         dcp.load(state_dict=state_dict, checkpoint_id=ckpt_path)
 
         # Load the dataloader
-        # TODO: Is there a way we can make this so one can restart in any world
-
         if self.config.skip_dataloader:
             get_logger().warning("Skipping dataloader checkpointing")
 
         if dataloader is not None and not self.config.skip_dataloader:
             dataloader_path = ckpt_path / "dataloader" / f"rank_{self._world.rank}.pt"
             if not dataloader_path.exists():
-                raise RuntimeError(
-                    f"Did not find local dataloader checkpoint at path {dataloader_path}. This might be because you tried restarting the trainer with a different world size. This is currently not supported."
+                self._logger.warning(
+                    f"Did not find local dataloader checkpoint at path {dataloader_path}. This might be because you tried restarting the trainer with a different world size. Falling back to using the master rank's dataloader checkpoint. Note, that this may cause training inconsistencies."
                 )
+                dataloader_path = ckpt_path / "dataloader" / "rank_0.pt"
+                if not dataloader_path.exists():
+                    raise RuntimeError(
+                        f"Couldn't fallback to using the master rank's dataloader checkpoint, because dataloder checkpoint was not found at path {dataloader_path}. Cannot resume training."
+                    )
             dataloader.load_state_dict(torch.load(dataloader_path))
 
         self._logger.debug(f"Training checkpoint loaded in {time.time() - start_time:.2f} seconds")
