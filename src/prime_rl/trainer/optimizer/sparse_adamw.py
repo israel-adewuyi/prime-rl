@@ -31,6 +31,18 @@ class SparseAdamW(Optimizer):
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(params, defaults)
 
+    def _init_sparse_state(self, p: Tensor, indices: Tensor):
+        """Initialize sparse optimizer states for a parameter"""
+        state = self.state[p]
+        if len(state) == 0:
+            num_active = indices.numel()
+            state["step"] = 0
+
+            # Initialize states with the same dtype as parameter
+            state["exp_avg"] = torch.zeros(num_active, dtype=p.dtype, device=p.device)
+            state["exp_avg_sq"] = torch.zeros(num_active, dtype=p.dtype, device=p.device)
+            state["sparse_indices"] = indices.clone()
+
     @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimizationi step"""
@@ -65,4 +77,34 @@ class SparseAdamW(Optimizer):
         """Update sparse params following AdamW implementation"""
         state = self.state[p]
 
-        return state  # TODO: remove
+        if len(state) == 0:
+            self._init_sparse_state(p, indices)
+
+        exp_avg = state["exp_avg"]
+        exp_avg_sq = state["exp_avg_sq"]
+        state["step"] += 1
+
+        beta1, beta2 = group["betas"]
+
+        grad_flat = grad.reshape(-1)  # TODO: reshape is inplace, rightt? doesn't create new memory
+        grad_sparse = grad_flat[indices]
+
+        exp_avg.mul_(beta1).addcmul_(grad_sparse, alpha=1 - beta1)
+        exp_avg_sq.mul_(beta2).addcmul_(grad_sparse, grad_sparse, value=1 - beta1)
+
+        # bias correction
+        bias_correction1 = 1 - beta1 ** state["step"]
+        bias_correction2 = 1 - beta2 ** state["step"]
+
+        step_size = group["lr"] / bias_correction1
+
+        denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(group["eps"])
+        update = exp_avg / denom
+
+        if group["weight_decay"] != 0:
+            p_flat = p.reshape(-1)
+            p_sparse = p_flat[indices]
+            update = update + group["weight_decay"] * p_sparse
+
+        p_flat = p.reshape(-1)
+        p_flat[indices] = p_flat[indices] - step_size * update
