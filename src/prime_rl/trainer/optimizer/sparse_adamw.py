@@ -92,6 +92,7 @@ class SparseAdamW(Optimizer):
         grad_flat = grad.reshape(-1)
         grad_sparse = grad_flat[indices]
 
+        # Update moment estimates
         exp_avg.mul_(beta1).add_(grad_sparse, alpha=1 - beta1)
         exp_avg_sq.mul_(beta2).addcmul_(grad_sparse, grad_sparse, value=1 - beta2)
 
@@ -101,9 +102,11 @@ class SparseAdamW(Optimizer):
 
         step_size = group["lr"] / bias_correction1
 
+        # Compute adaptive step
         denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(group["eps"])
         update = exp_avg / denom
 
+        # Apply weight decay (decoupled, AdamW-style) and update parameters
         p_flat = p.reshape(-1)
         if group["weight_decay"] != 0:
             update = update + group["weight_decay"] * p_flat[indices]
