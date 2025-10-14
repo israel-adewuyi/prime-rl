@@ -223,7 +223,8 @@ def setup_model(config: ModelConfig, parallel_dims: ParallelDims, mask_loading_c
     if config.load_using_meta and not can_load_dcp_from_hf(model):
         model = get_model(config, device=torch.device("cpu"), dtype=DTYPE_MAP[config.optimization_dtype])
 
-    # Load masks if specified (before FSDP setup to preserve parameter names)
+    # Load masks if specified
+    masks = None
     if mask_loading_config is not None and mask_loading_config.enabled:
         from prime_rl.trainer.utils import apply_masks_to_model, load_masks_from_hf
 
@@ -232,10 +233,9 @@ def setup_model(config: ModelConfig, parallel_dims: ParallelDims, mask_loading_c
 
         try:
             masks = load_masks_from_hf(mask_loading_config.hf_repo_id, mask_loading_config.step)
-            apply_masks_to_model(model, masks)
-            logger.info("Successfully applied masks to model parameters")
+            logger.info("Successfully loaded masks")
         except Exception as e:
-            logger.error(f"Failed to load or apply masks: {e}")
+            logger.error(f"Failed to load masks: {e}")
             raise
 
     # Apply LoRA before FSDP setup
@@ -249,6 +249,22 @@ def setup_model(config: ModelConfig, parallel_dims: ParallelDims, mask_loading_c
         apply_compile(model, config.compile)
 
     setup_fsdp(model, config, parallel_dims)
+
+    if masks:
+        try:
+            from prime_rl.trainer.utils import apply_masks_to_model
+
+            apply_masks_to_model(model, masks)
+            logger.info("Successfully applied masks to model parameters")
+        except Exception as e:
+            logger.error(f"Failed to apply masks: {e}")
+            raise
+
+    # TODO: Remove this line after final inspection.
+    if masks:
+        del masks
+        for name, param in model.named_parameters():
+            logger.debug(f"Does param {name} have sparse indices? {hasattr(param, '_sparse_mask_indices')}")
 
     if config.load_using_meta and can_load_dcp_from_hf(model):
         load_dcp_from_hf(model, config)
