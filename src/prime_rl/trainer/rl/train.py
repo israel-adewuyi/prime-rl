@@ -88,7 +88,7 @@ def train(config: RLTrainerConfig):
     # Set up the gradient accumulator (only if saving masks)
     grad_accumulator = None
     if config.grad_acc is not None and config.grad_acc.save_masks:
-        logger.info(f"Initializing gradient accumulator for mask generation")
+        logger.info("Initializing gradient accumulator for mask generation")
         grad_accumulator = GradientAccumulator(
             config.grad_acc.beta,
             config.grad_acc.epsilon,
@@ -445,6 +445,13 @@ def train(config: RLTrainerConfig):
             distributions=distributions,
             step=progress.step,
         )
+
+        if is_first_step:
+            total_number_of_params_in_state = 0
+            for param, state in optimizer.state.items():
+                total_number_of_params_in_state += state["exp_avg"].numel()
+
+            logger.debug(f"Total number of optimized states = {total_number_of_params_in_state}")
 
         progress.step += 1
         is_first_step = False
