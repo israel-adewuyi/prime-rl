@@ -89,7 +89,21 @@ class SparseAdamW(Optimizer):
 
         beta1, beta2 = group["betas"]
 
-        grad_flat = grad.reshape(-1)
+        # Handle DTensor from FSDP
+        from torch.distributed.tensor import DTensor
+
+        if isinstance(grad, DTensor):
+            grad_local = grad.to_local()
+        else:
+            grad_local = grad
+
+        if isinstance(p, DTensor):
+            p_local = p.to_local()
+        else:
+            p_local = p
+
+        # grad_flat = grad.reshape(-1)
+        grad_flat = grad_local.reshape(-1)
         grad_sparse = grad_flat[indices]
 
         # Update moment estimates
@@ -107,7 +121,8 @@ class SparseAdamW(Optimizer):
         update = exp_avg / denom
 
         # Apply weight decay (decoupled, AdamW-style) and update parameters
-        p_flat = p.reshape(-1)
+        # p_flat = p.reshape(-1)
+        p_flat = p_local.reshape(-1)
         if group["weight_decay"] != 0:
             update = update + group["weight_decay"] * p_flat[indices]
 
