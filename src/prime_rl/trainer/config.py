@@ -322,7 +322,14 @@ class MuonConfig(BaseOptimizerConfig):
     betas2: Annotated[float, Field(ge=0)] = 0.999
 
 
-OptimizerConfigType: TypeAlias = SGDConfig | AdamWConfig | MuonConfig
+class SparseAdamWConfig(BaseOptimizerConfig):
+    type: Literal["sparse_adamw"] = "sparse_adamw"
+
+    betas1: Annotated[float, Field(ge=0)] = 0.9
+    betas2: Annotated[float, Field(ge=0)] = 0.999
+
+
+OptimizerConfigType: TypeAlias = SGDConfig | AdamWConfig | MuonConfig | SparseAdamWConfig
 
 
 class CheckpointConfig(BaseConfig):

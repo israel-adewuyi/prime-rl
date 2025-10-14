@@ -4,6 +4,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.optim import SGD, AdamW, Optimizer
 
 from prime_rl.trainer.config import OptimizerConfigType
+from prime_rl.trainer.optimizer.sparse_adamw import SparseAdamW
 
 
 def setup_optimizer(config: OptimizerConfigType, model: nn.Module, device_mesh: DeviceMesh) -> Optimizer:
@@ -55,3 +56,10 @@ def setup_optimizer(config: OptimizerConfigType, model: nn.Module, device_mesh: 
             )
 
             return optimizer
+        case "sparse_adamw":
+            return SparseAdamW(
+                params=model.parameters(),
+                lr=config.lr,
+                weight_decay=config.weight_decay,
+                betas=(config.betas1, config.betas2),
+            )
