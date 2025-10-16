@@ -11,6 +11,9 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 
 REPO_ID="prime-rl"
 
+# Flag defaults (can be overridden via env)
+SKIP_CLONE=${SKIP_CLONE:-0}
+
 has_ssh_access() {
     # Probe SSH auth to GitHub without prompting; treat any nonzero as "no ssh"
     # We try a quick ls-remote to avoid cloning on failure.
@@ -47,17 +50,21 @@ main() {
     log_info "Configuring SSH known_hosts for GitHub..."
     ensure_known_hosts
 
-    log_info "Determining best way to clone (SSH vs HTTPS)..."
-    if has_ssh_access; then
-        log_info "SSH access to GitHub works. Cloning via SSH."
-        git clone git@github.com:PrimeIntellect-ai/${REPO_ID}.git
+    if [ "$SKIP_CLONE" -eq 1 ]; then
+        log_info "Skipping clone; assuming we are already inside the repo."
     else
-        log_warn "SSH auth to GitHub not available. Cloning via HTTPS."
-        git clone https://github.com/PrimeIntellect-ai/${REPO_ID}.git
-    fi
+        log_info "Determining best way to clone (SSH vs HTTPS)..."
+        if has_ssh_access; then
+            log_info "SSH access to GitHub works. Cloning via SSH."
+            git clone git@github.com:PrimeIntellect-ai/${REPO_ID}.git
+        else
+            log_warn "SSH auth to GitHub not available. Cloning via HTTPS."
+            git clone https://github.com/PrimeIntellect-ai/${REPO_ID}.git
+        fi
 
-    log_info "Entering project directory..."
-    cd ${REPO_ID}
+        log_info "Entering project directory..."
+        cd ${REPO_ID}
+    fi
 
     log_info "Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
