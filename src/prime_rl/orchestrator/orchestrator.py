@@ -18,8 +18,9 @@ from prime_rl.orchestrator.client import (
     check_has_model,
     check_health,
     reload_weights,
-    update_weights,
+    setup_admin_client,
     setup_client,
+    update_weights,
 )
 from prime_rl.orchestrator.config import OrchestratorConfig
 from prime_rl.orchestrator.buffer import setup_buffer, make_rollouts, Rollout
@@ -27,7 +28,6 @@ from prime_rl.orchestrator.batch import prepare_batch
 from prime_rl.utils.logger import setup_logger
 from prime_rl.orchestrator.advantage import compute_advantages
 from prime_rl.orchestrator.utils import (
-    wait_for_weight_checkpoint,
     print_benchmark,
     parse_is_truncated_completions,
 )
@@ -66,6 +66,7 @@ async def orchestrate(config: OrchestratorConfig):
         f"Initializing OpenAI client (base_url={config.client.base_url}, api_key_var={config.client.api_key_var}, server_type={config.client.server_type})"
     )
     client = setup_client(config.client)
+    admin_client = setup_admin_client(config.client)
 
     # Load tokenizer
     logger.info(f"Initializing tokenizer for {config.model.name}")
@@ -106,10 +107,10 @@ async def orchestrate(config: OrchestratorConfig):
         logger.info(f"Resuming training from checkpoint step `{config.ckpt.resume_step}`")
         ckpt_manager.load(progress, buffer, step=config.ckpt.resume_step)
         ckpt_step = max(progress.step - config.async_level, 0)
-        await update_weights(client, get_step_path(get_weights_dir(config.output_dir), ckpt_step))
+        await update_weights(admin_client, get_step_path(get_weights_dir(config.output_dir), ckpt_step))
     else:
         logger.info("Training from scratch. Resetting weights to base model")
-        await reload_weights(client)
+        await reload_weights(admin_client)
 
     # Iterate over dataset in batches
     max_steps = config.max_steps or int(1e9)
@@ -117,6 +118,7 @@ async def orchestrate(config: OrchestratorConfig):
     ckpt_step = 0
     last_eval_step = -1
     is_first_step = True
+
     while True:
         # Save checkpoint (if we are at an interval step and not at the first or last step)
         is_last_step = config.max_steps is not None and progress.step == config.max_steps - 1
@@ -153,14 +155,14 @@ async def orchestrate(config: OrchestratorConfig):
             ckpt_step = progress.step - config.async_level
             logger.info(f"Waiting for weight checkpoint {ckpt_step}")
             wait_for_weight_ckpt_start_time = time.time()
-            wait_for_path(get_step_path(get_weights_dir(config.output_dir), ckpt_step) / "STABLE")
+            await wait_for_path(get_step_path(get_weights_dir(config.output_dir), ckpt_step) / "STABLE")
             wait_for_weight_ckpt_time = time.time() - wait_for_weight_ckpt_start_time
             logger.debug(f"Waited {wait_for_weight_ckpt_time:.2f}s for weight checkpoint")
 
             # Update the weights
             logger.info(f"Updating weights to weight checkpoint {ckpt_step}")
             update_weights_start_time = time.time()
-            await update_weights(client, get_step_path(get_weights_dir(config.output_dir), ckpt_step))
+            await update_weights(admin_client, get_step_path(get_weights_dir(config.output_dir), ckpt_step))
             update_weights_time = time.time() - update_weights_start_time
             logger.debug(f"Updated weights in {update_weights_time:.2f}s")
 
@@ -209,7 +211,6 @@ async def orchestrate(config: OrchestratorConfig):
                 "task": [problem.get("task", config.environment.id) for problem in problems],
                 "answer": [problem.get("answer", "") for problem in problems],
             }
-
             # Convert SamplingConfig to vLLM OAI sampling args
             # https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html#extra-parameters_2
             sampling_args = dict(config.sampling)
@@ -225,12 +226,10 @@ async def orchestrate(config: OrchestratorConfig):
 
             # Generate completions + rewards with verifiers
             logger.info(f"Sending {len(problems)} requests to environments")
+
             generate_completions_start_time = time.time()
             generate_outputs: GenerateOutputs = await vf_env.a_generate(
-                inputs=inputs,
-                client=client,
-                model=config.model.name,
-                sampling_args=sampling_args,
+                inputs=inputs, client=client, model=config.model.name, sampling_args=sampling_args
             )
             generate_completions_time = time.time() - generate_completions_start_time
             problem_requests += problems_to_sample

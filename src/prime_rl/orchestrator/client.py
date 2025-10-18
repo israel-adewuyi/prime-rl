@@ -3,11 +3,32 @@ import os
 from pathlib import Path
 
 import httpx
-from httpx import Response
+from httpx import AsyncClient, Response
 from openai import AsyncOpenAI, NotFoundError
 
 from prime_rl.orchestrator.config import ClientConfig
 from prime_rl.utils.logger import get_logger
+
+
+def setup_admin_client(client_config: ClientConfig) -> httpx.AsyncClient:
+    """Create a dedicated admin client for weight update operations.
+
+    Uses a separate connection pool to avoid queueing behind streaming requests.
+    """
+    headers = {}
+    api_key = os.getenv(client_config.api_key_var, "EMPTY")
+    if api_key and api_key != "EMPTY":
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    # Strip /v1 suffix since admin endpoints are at root level
+    base_url = client_config.base_url.rstrip("/").removesuffix("/v1")
+
+    return httpx.AsyncClient(
+        base_url=base_url,
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        headers=headers,
+        timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=None),
+    )
 
 
 def setup_client(client_config: ClientConfig) -> AsyncOpenAI:
@@ -59,26 +80,28 @@ async def check_has_model(client: AsyncOpenAI, model_name: str) -> None:
     logger.debug(f"Model {model_name} was found in the inference pool")
 
 
-async def update_weights(client: AsyncOpenAI, weight_dir: Path) -> None:
+async def update_weights(admin_client: AsyncClient, weight_dir: Path) -> None:
     """Make a HTTP post request to the vLLM server to update the weights."""
     logger = get_logger()
-    url = str(client.base_url).strip()[:-4] + "/update_weights"
     try:
-        logger.debug(f"Sending request to {url} to update weights from {weight_dir}")
-        await client.post(url, cast_to=Response, body={"weight_dir": weight_dir.as_posix()})
-    except NotFoundError:
-        logger.warning(f"The route {url} does not exist. Skipping weight update.")
-        return
+        response = await admin_client.post("/update_weights", json={"weight_dir": weight_dir.as_posix()})
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            logger.warning("The route /update_weights does not exist. Skipping weight update.")
+            return
+        raise
 
 
-async def reload_weights(client: AsyncOpenAI) -> None:
+async def reload_weights(admin_client: AsyncClient) -> None:
     """Make a HTTP post request to the vLLM server to reload weights (reset to base model)."""
     logger = get_logger()
-    url = str(client.base_url).strip()[:-4] + "/reload_weights"
+    logger.debug("Sending request to reload weights (reset to base model)")
     try:
-        logger.debug(f"Sending request to {url} to reload weights (reset to base model)")
-        await client.post(url, cast_to=Response, body={})
-    except NotFoundError:
-        logger.warning(f"The route {url} does not exist. Skipping weight reload.")
-        return
-    await client.post(url, cast_to=Response, body={})
+        response = await admin_client.post("/reload_weights", json={})
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            logger.warning("The route /reload_weights does not exist. Skipping weight reload.")
+            return
+        raise

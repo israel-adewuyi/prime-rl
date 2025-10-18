@@ -6,6 +6,7 @@ from datetime import timedelta
 # ruff: noqa: I001
 
 import torch
+import torch.distributed as dist
 from torch.profiler import profile, ProfilerActivity, record_function
 from loguru import logger
 from prime_rl.trainer.ckpt import Progress, setup_ckpt_manager
@@ -373,6 +374,8 @@ def train(config: RLTrainerConfig):
 
 
 def main():
+    """Main entry-point for RL trainer. Run using `uv run trainer`"""
+
     train(parse_argv(RLTrainerConfig))
 
 
