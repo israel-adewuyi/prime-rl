@@ -9,9 +9,11 @@ lr = 1e-6
 [grad_acc]
 beta = 0.99
 epsilon = 1e-8
-save_interval = 1
+grad_save_interval = 1
+mask_save_interval = 1
 tolerance = 1e-5
 save_masks = true
 upload_to_hf = true
+hf_upload_interval = 1
 hf_repo_id = "test_masks"
-hf_private = true
+hf_private = false

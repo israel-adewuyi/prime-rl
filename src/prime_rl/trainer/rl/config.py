@@ -54,11 +54,11 @@ class GradientAccumulatorConfig(BaseConfig):
 
     beta: Annotated[float, Field(description="Decay rate of previous gradient")] = 0.99
     epsilon: Annotated[float, Field(description="epsilon term for numeric stability when logging")] = 1e-8
-    save_interval: Annotated[int, Field(description="How often should the current accumulated grad be saved? ")] = 1
+    grad_save_interval: Annotated[int, Field(description="How often should the current accumulated grad be saved? ")] = 1
     tolerance: Annotated[
         float, Field(description="Threshold for determining if a parameter is active (for masking)")
     ] = 1e-5
-    save_masks: Annotated[bool, Field(description="Whether to save binary masks alongside gradient accumulations")] = (
+    save_masks: Annotated[bool, Field(description="Whether to save binary masks")] = (
         True
     )
     mask_save_interval: Annotated[

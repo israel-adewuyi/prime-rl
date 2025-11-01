@@ -292,14 +292,14 @@ class GradientAccumulator:
     ):
         self.beta = config.beta
         self.epsilon = config.epsilon
-        self.interval = config.save_interval
+        self.grad_save_interval = config.grad_save_interval
         self.output_dir = output_dir
         self.mask_tolerance = config.tolerance
         self.save_masks = config.save_masks
-        self.mask_save_interval = config.mask_save_interval or config.save_interval
+        self.mask_save_interval = config.mask_save_interval
         self.upload_to_hf = config.upload_to_hf
         self.hf_repo_id = config.hf_repo_id
-        self.hf_upload_interval = config.hf_upload_interval or config.mask_save_interval or config.save_interval
+        self.hf_upload_interval = config.hf_upload_interval
         self.hf_private = config.hf_private
 
         # Validate HF configuration
@@ -362,9 +362,9 @@ class GradientAccumulator:
 
         self.log(step, monitor, logger)
 
-        if step % self.interval == 0 and step > 0:
+        if step % self.grad_save_interval == 0 and step > 0:
             acc_path = self.output_dir / "grad_acc" / f"grad_ema_step_{step}.pt"
-            self.save(acc_path)
+            self._save_grad_ema(acc_path)
             logger.info(f"Saved gradient EMA to {acc_path}")
 
         # Compute and save masks if enabled
@@ -397,16 +397,10 @@ class GradientAccumulator:
                 else:
                     logger.warning(f"Failed to upload masks for step {step} to HF Hub")
 
-    def save(self, path, save_mask: bool = False):
-        """Save gradient accumulation. Optionally save masks alongside gradients."""
+    def _save_grad_ema(self, path):
+        """Save gradient accumulation to disk."""
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.acc, path)
-
-        if save_mask and self.save_masks:
-            # Save masks with similar filename pattern
-            mask_path = path.parent / f"{path.stem.replace('grad_ema', 'grad_mask')}{path.suffix}"
-            masks = self._compute_masks()
-            self._save_masks(mask_path, masks)
 
     def _save_masks(self, path, masks: OrderedDict):
         """Save boolean masks to disk."""
