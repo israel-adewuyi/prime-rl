@@ -18,6 +18,7 @@ from torch.distributed.checkpoint.state_dict import _get_fqns as get_fqns
 from torch.distributed.tensor import DTensor
 from transformers.tokenization_utils import PreTrainedTokenizer
 
+from prime_rl.trainer.rl.config import GradientAccumulatorConfig
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.logger import get_logger
 from prime_rl.utils.utils import format_num, format_time
@@ -285,30 +286,21 @@ class MemoryProfiler:
 class GradientAccumulator:
     def __init__(
         self,
-        beta: float,
-        epsilon: float,
-        save_interval: int,
-        output_dir,
+        config: GradientAccumulatorConfig,
         model: nn.Module,
-        tolerance: float = 1e-5,
-        save_masks: bool = True,
-        mask_save_interval: int = None,
-        upload_to_hf: bool = False,
-        hf_repo_id: str = None,
-        hf_upload_interval: int = None,
-        hf_private: bool = True,
+        output_dir: Path,
     ):
-        self.beta = beta
-        self.epsilon = epsilon
-        self.interval = save_interval
-        self.output_dir = Path(output_dir)
-        self.mask_tolerance = tolerance
-        self.save_masks = save_masks
-        self.mask_save_interval = mask_save_interval or save_interval
-        self.upload_to_hf = upload_to_hf
-        self.hf_repo_id = hf_repo_id
-        self.hf_upload_interval = hf_upload_interval or mask_save_interval or save_interval
-        self.hf_private = hf_private
+        self.beta = config.beta
+        self.epsilon = config.epsilon
+        self.interval = config.save_interval
+        self.output_dir = output_dir
+        self.mask_tolerance = config.tolerance
+        self.save_masks = config.save_masks
+        self.mask_save_interval = config.mask_save_interval or config.save_interval
+        self.upload_to_hf = config.upload_to_hf
+        self.hf_repo_id = config.hf_repo_id
+        self.hf_upload_interval = config.hf_upload_interval or config.mask_save_interval or config.save_interval
+        self.hf_private = config.hf_private
 
         # Validate HF configuration
         if self.upload_to_hf and not self.hf_repo_id:

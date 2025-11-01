@@ -1,4 +1,4 @@
-max_steps = 300
+max_steps = 3
 batch_size = 64
 micro_batch_size = 1
 seq_len = 2048
@@ -7,15 +7,6 @@ mask_truncated_completions = false
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
-
-[wandb]
-project = "alphabet-sort"
-name = "orch/mask_train_mask_step=80"
-
-[wandb.log_extras]
-samples = true
-distributions = false
-interval = 2
 
 [environment]
 id = "alphabet-sort"
