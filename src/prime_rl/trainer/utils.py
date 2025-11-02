@@ -315,7 +315,7 @@ class GradientAccumulator:
                 assert len(hf_name) == 1, f"Expected single FQN, got {hf_name}"
                 hf_name = next(iter(hf_name))
 
-                self.acc[hf_name] = torch.zeros_like(param.data, requires_grad=False, device="cpu")
+                self.acc[hf_name] = get_real_tensor(torch.zeros_like(param.data, requires_grad=False, device="cpu"))
 
     def _compute_masks(self) -> OrderedDict:
         """Generate boolean masks based on gradient magnitudes."""
