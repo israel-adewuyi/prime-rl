@@ -360,7 +360,8 @@ class GradientAccumulator:
                 hf_name = next(iter(hf_name))
 
                 # Compute on GPU, then immediately move to CPU
-                grad_sq = (param.grad**2).detach().to("cpu")
+                grad_sq = (param.grad**2).detach()
+                grad_sq = get_real_tensor(grad_sq).to("cpu")
                 self.acc[hf_name] = self.beta * self.acc[hf_name] + (1 - self.beta) * grad_sq
 
         self.log(step, monitor, logger)
@@ -373,7 +374,7 @@ class GradientAccumulator:
         # Compute and save masks if enabled
         if self.save_masks and step % self.mask_save_interval == 0 and step > 0:
             all_masks = self._compute_masks()
-            
+
             for tolerance, masks in all_masks.items():
                 mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}_tolerance_{tolerance}.pt"
                 self._save_masks(mask_path, masks)
@@ -594,7 +595,9 @@ This repository is licensed under the MIT License.
         all_masks = self._compute_masks()
         for tolerance, masks in all_masks.items():
             mask_stats = self._compute_mask_stats(masks)
-            logger.info(f"Step {step} | Tolerance {tolerance} | Active Fraction: {mask_stats['grad_mask/active_fraction']:.4f} | Sparsity: {mask_stats['grad_mask/sparsity']:.4f}")
+            logger.info(
+                f"Step {step} | Tolerance {tolerance} | Active Fraction: {mask_stats['grad_mask/active_fraction']:.4f} | Sparsity: {mask_stats['grad_mask/sparsity']:.4f}"
+            )
             mask_stats["step"] = step
             mask_stats["tolerance"] = tolerance
             monitor.log(mask_stats)
@@ -602,13 +605,6 @@ This repository is licensed under the MIT License.
         # Log gradient EMA
         logger.info(f"Step {step} | EMA RMS Mean: {global_rms:.4f}")
         monitor.log({"grad_ema/rms_mean": global_rms, "step": step})
-
-        # Log mask statistics
-        # logger.info(
-        #     f"Step {step} | Active Fraction: {mask_stats['grad_mask/active_fraction']:.4f} | Sparsity: {mask_stats['grad_mask/sparsity']:.4f}"
-        # )
-        # mask_stats["step"] = step
-        # monitor.log(mask_stats)
 
 
 # Utility functions for loading masks from Hugging Face Hub
