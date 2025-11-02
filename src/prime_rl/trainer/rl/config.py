@@ -54,13 +54,16 @@ class GradientAccumulatorConfig(BaseConfig):
 
     beta: Annotated[float, Field(description="Decay rate of previous gradient")] = 0.99
     epsilon: Annotated[float, Field(description="epsilon term for numeric stability when logging")] = 1e-8
-    grad_save_interval: Annotated[int, Field(description="How often should the current accumulated grad be saved? ")] = 1
-    tolerance: Annotated[   
+    grad_save_interval: Annotated[
+        int | None,
+        Field(
+            description="How often should the current accumulated grad be saved? If None, will not save the gradient EMA."
+        ),
+    ] = None
+    tolerance: Annotated[
         list[float], Field(description="Threshold for determining if a parameter is active (for masking)")
     ] = [1e-5]
-    save_masks: Annotated[bool, Field(description="Whether to save binary masks")] = (
-        True
-    )
+    save_masks: Annotated[bool, Field(description="Whether to save binary masks")] = True
     mask_save_interval: Annotated[
         int | None, Field(description="How often should masks be saved? If None, uses save_interval")
     ] = None
@@ -76,14 +79,8 @@ class MaskLoadingConfig(BaseConfig):
     """Configures mask loading from Hugging Face Hub"""
 
     enabled: Annotated[bool, Field(description="Whether to load masks from HF Hub")] = False
-    hf_repo_id: Annotated[
-        str | None,
-        Field(description="Hugging Face repository ID containing the masks")
-    ] = None
-    step: Annotated[
-        int | None,
-        Field(description="Training step to load masks for")
-    ] = None
+    hf_repo_id: Annotated[str | None, Field(description="Hugging Face repository ID containing the masks")] = None
+    step: Annotated[int | None, Field(description="Training step to load masks for")] = None
 
 
 class RLTrainerConfig(BaseSettings):
@@ -112,7 +109,7 @@ class RLTrainerConfig(BaseSettings):
 
     # The gradient accumulation config
     grad_acc: GradientAccumulatorConfig | None = None
-    
+
     # The mask loading config
     mask_loading: MaskLoadingConfig | None = None
 
@@ -214,19 +211,19 @@ class RLTrainerConfig(BaseSettings):
         """Ensure mask loading and saving are mutually exclusive operations."""
         has_mask_loading = self.mask_loading is not None and self.mask_loading.enabled
         has_mask_saving = self.grad_acc is not None and self.grad_acc.save_masks
-        
+
         if has_mask_loading and has_mask_saving:
             raise ValueError(
                 "Cannot both load masks and save masks in the same run. "
                 "Use separate training runs for these operations. "
                 "Set either mask_loading.enabled=false or grad_acc.save_masks=false."
             )
-        
+
         # Validate mask loading configuration
         if has_mask_loading:
             if not self.mask_loading.hf_repo_id:
                 raise ValueError("mask_loading.hf_repo_id must be specified when mask_loading.enabled=true")
             if self.mask_loading.step is None:
                 raise ValueError("mask_loading.step must be specified when mask_loading.enabled=true")
-        
+
         return self

@@ -366,7 +366,7 @@ class GradientAccumulator:
 
         self.log(step, monitor, logger)
 
-        if step % self.grad_save_interval == 0 and step > 0:
+        if self.grad_save_interval and step % self.grad_save_interval == 0 and step > 0:
             acc_path = self.output_dir / "grad_acc" / f"grad_ema_step_{step}.pt"
             self._save_grad_ema(acc_path)
             logger.info(f"Saved gradient EMA to {acc_path}")
