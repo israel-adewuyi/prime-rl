@@ -376,7 +376,9 @@ class GradientAccumulator:
             all_masks = self._compute_masks()
 
             for tolerance, masks in all_masks.items():
-                mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}_tolerance_{tolerance}.pt"
+                mask_path = (
+                    self.output_dir / "grad_acc" / f"grad_mask_beta_{self.beta}_step_{step}_tolerance_{tolerance}.pt"
+                )
                 self._save_masks(mask_path, masks)
                 logger.info(f"Saved gradient masks with tolerance {tolerance} to {mask_path}")
 
@@ -467,8 +469,10 @@ class GradientAccumulator:
             # api = HfApi()
 
             # Upload masks file
-            mask_filename = f"masks/step_{step}_tolerance_{tolerance}.pt"
-            mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}_tolerance_{tolerance}.pt"
+            mask_filename = f"masks/beta_{self.beta}_step_{step}_tolerance_{tolerance}.pt"
+            mask_path = (
+                self.output_dir / "grad_acc" / f"grad_mask_beta_{self.beta}_step_{step}_tolerance_{tolerance}.pt"
+            )
 
             if mask_path.exists():
                 logger.info(f"Uploading masks with tolerance {tolerance} to {self.hf_repo_id}/{mask_filename}")
@@ -483,7 +487,7 @@ class GradientAccumulator:
             import json
             import tempfile
 
-            metadata_filename = f"metadata/step_{step}_tolerance_{tolerance}_info.json"
+            metadata_filename = f"metadata/beta_{self.beta}_step_{step}_tolerance_{tolerance}_info.json"
             with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
                 json.dump(metadata, f, indent=2)
                 temp_path = f.name
@@ -542,7 +546,7 @@ import torch
 # Download masks for a specific step
 mask_path = hf_hub_download(
     repo_id="{self.hf_repo_id}",
-    filename="masks/step_1000.pt"
+    filename="masks/beta_<beta>_step_<step>_tolerance_<tolerance>.pt"
 )
 masks = torch.load(mask_path, map_location="cpu")
 
@@ -556,14 +560,14 @@ for name, param in model.named_parameters():
 ## Mask Generation
 
 - **Tolerance**: {self.mask_tolerance}
-- **Beta (EMA decay)**: {self.beta}
+- **Beta (EMA decay)**: [90, 95, 99]
 - **Epsilon**: {self.epsilon}
 - **Base Model**: {model_name}
 
 ## Files
 
-- `masks/step_*.pt`: Boolean masks for each training step
-- `metadata/step_*_info.json`: Metadata about each mask set
+- `masks/beta_<beta>_step_<step>_tolerance_<tolerance>.pt`: Boolean masks for each training step
+- `metadata/beta_<beta>_step_<step>_tolerance_<tolerance>_info.json`: Metadata about each mask set
 
 ## License
 
