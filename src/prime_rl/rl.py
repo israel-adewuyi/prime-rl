@@ -28,6 +28,7 @@ from prime_rl.utils.utils import (
     get_cuda_visible_devices,
     get_free_port,
     get_log_dir,
+    get_masks_dir,
     get_rollout_dir,
     get_weights_dir,
 )
@@ -398,6 +399,7 @@ def rl(config: RLConfig):
     ckpt_dir = get_ckpt_dir(config.output_dir)
     weights_dir = get_weights_dir(config.output_dir)
     rollout_dir = get_rollout_dir(config.output_dir)
+    masks_dir = get_masks_dir(config.output_dir)
 
     # Clean up directories if specified
     if config.clean:
@@ -416,6 +418,9 @@ def rl(config: RLConfig):
 
             logger.info(f"Cleaning checkpoint weights directory ({weights_dir})")
             shutil.rmtree(weights_dir, ignore_errors=True)
+
+            logger.info(f"Cleaning masks directory ({masks_dir})")
+            shutil.rmtree(masks_dir, ignore_errors=True)
 
         # Cleaning rollouts
         logger.info(f"Cleaning rollout dir ({rollout_dir})")
