@@ -319,12 +319,15 @@ class GradientAccumulator:
 
     def _compute_masks(self) -> OrderedDict:
         """Generate boolean masks based on gradient magnitudes."""
-        masks = OrderedDict()
-        for name, grad_ema in self.acc.items():
-            # Create boolean mask: True if gradient magnitude > tolerance, False otherwise
-            mask = grad_ema > self.mask_tolerance
-            masks[name] = mask
-        return masks
+        all_masks: OrderedDict = OrderedDict()
+        for tolerance in self.mask_tolerance:
+            masks = OrderedDict()
+            for name, grad_ema in self.acc.items():
+                # Create boolean mask: True if gradient magnitude > tolerance, False otherwise
+                mask = grad_ema > tolerance
+                masks[name] = mask
+            all_masks[str(tolerance)] = masks
+        return all_masks
 
     def _compute_mask_stats(self, masks: OrderedDict) -> dict[str, float]:
         """Compute statistics about mask sparsity."""
@@ -369,33 +372,35 @@ class GradientAccumulator:
 
         # Compute and save masks if enabled
         if self.save_masks and step % self.mask_save_interval == 0 and step > 0:
-            masks = self._compute_masks()
-            mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}.pt"
-            self._save_masks(mask_path, masks)
-            logger.info(f"Saved gradient masks to {mask_path}")
+            all_masks = self._compute_masks()
+            
+            for tolerance, masks in all_masks.items():
+                mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}_tolerance_{tolerance}.pt"
+                self._save_masks(mask_path, masks)
+                logger.info(f"Saved gradient masks with tolerance {tolerance} to {mask_path}")
 
-            # Upload to Hugging Face Hub if enabled
-            if self.upload_to_hf and step % self.hf_upload_interval == 0:
-                # Get model name from the first parameter (assuming all params have the same base model)
-                model_name = "unknown_model"
-                if self.acc:
-                    first_param_name = next(iter(self.acc.keys()))
-                    # Extract model name from parameter name (e.g., "model.embed_tokens.weight" -> "model")
-                    model_name = first_param_name.split(".")[0] if "." in first_param_name else "model"
+                # Upload to Hugging Face Hub if enabled
+                if self.upload_to_hf and step % self.hf_upload_interval == 0:
+                    # Get model name from the first parameter (assuming all params have the same base model)
+                    model_name = "unknown_model"
+                    if self.acc:
+                        first_param_name = next(iter(self.acc.keys()))
+                        # Extract model name from parameter name (e.g., "model.embed_tokens.weight" -> "model")
+                        model_name = first_param_name.split(".")[0] if "." in first_param_name else "model"
 
-                # Prepare repository on first upload
-                if step == self.hf_upload_interval:
-                    if not self._prepare_hf_repo(logger):
-                        logger.warning("Failed to prepare HF repository, skipping upload")
-                        return
-                    self._update_hf_readme(model_name, logger)
+                    # Prepare repository on first upload
+                    if step == self.hf_upload_interval:
+                        if not self._prepare_hf_repo(logger):
+                            logger.warning("Failed to prepare HF repository, skipping upload")
+                            return
+                        self._update_hf_readme(model_name, logger)
 
-                # Create metadata and upload
-                metadata = self._create_mask_metadata(masks, step, model_name)
-                if self._upload_masks_to_hf(masks, metadata, step, logger):
-                    logger.info(f"Successfully uploaded masks for step {step} to HF Hub")
-                else:
-                    logger.warning(f"Failed to upload masks for step {step} to HF Hub")
+                    # Create metadata and upload
+                    metadata = self._create_mask_metadata(masks, step, tolerance, model_name)
+                    if self._upload_masks_to_hf(masks, metadata, step, tolerance, logger):
+                        logger.info(f"Successfully uploaded masks with tolerance {tolerance} for step {step} to HF Hub")
+                    else:
+                        logger.warning(f"Failed to upload masks with tolerance {tolerance} for step {step} to HF Hub")
 
     def _save_grad_ema(self, path):
         """Save gradient accumulation to disk."""
@@ -411,7 +416,7 @@ class GradientAccumulator:
         """Load boolean masks from disk."""
         return torch.load(path, map_location="cpu")
 
-    def _create_mask_metadata(self, masks: OrderedDict, step: int, model_name: str) -> dict:
+    def _create_mask_metadata(self, masks: OrderedDict, step: int, tolerance: float, model_name: str) -> dict:
         """Create metadata for the masks."""
         total_params = sum(mask.numel() for mask in masks.values())
         active_params = sum(mask.sum().item() for mask in masks.values())
@@ -420,7 +425,7 @@ class GradientAccumulator:
         return {
             "step": step,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "tolerance": self.mask_tolerance,
+            "tolerance": tolerance,
             "total_parameters": total_params,
             "active_parameters": active_params,
             "active_fraction": active_fraction,
@@ -453,7 +458,7 @@ class GradientAccumulator:
             logger.error(f"Failed to prepare HF repository: {e}")
             return False
 
-    def _upload_masks_to_hf(self, masks: OrderedDict, metadata: dict, step: int, logger) -> bool:
+    def _upload_masks_to_hf(self, masks: OrderedDict, metadata: dict, step: int, tolerance: float, logger) -> bool:
         """Upload masks and metadata to Hugging Face Hub."""
         try:
             from huggingface_hub import upload_file
@@ -461,11 +466,11 @@ class GradientAccumulator:
             # api = HfApi()
 
             # Upload masks file
-            mask_filename = f"masks/step_{step}.pt"
-            mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}.pt"
+            mask_filename = f"masks/step_{step}_tolerance_{tolerance}.pt"
+            mask_path = self.output_dir / "grad_acc" / f"grad_mask_step_{step}_tolerance_{tolerance}.pt"
 
             if mask_path.exists():
-                logger.info(f"Uploading masks to {self.hf_repo_id}/{mask_filename}")
+                logger.info(f"Uploading masks with tolerance {tolerance} to {self.hf_repo_id}/{mask_filename}")
                 upload_file(
                     path_or_fileobj=str(mask_path),
                     path_in_repo=mask_filename,
@@ -477,12 +482,12 @@ class GradientAccumulator:
             import json
             import tempfile
 
-            metadata_filename = f"metadata/step_{step}_info.json"
+            metadata_filename = f"metadata/step_{step}_tolerance_{tolerance}_info.json"
             with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
                 json.dump(metadata, f, indent=2)
                 temp_path = f.name
 
-            logger.info(f"Uploading metadata to {self.hf_repo_id}/{metadata_filename}")
+            logger.info(f"Uploading metadata with tolerance {tolerance} to {self.hf_repo_id}/{metadata_filename}")
             upload_file(
                 path_or_fileobj=temp_path, path_in_repo=metadata_filename, repo_id=self.hf_repo_id, repo_type="model"
             )
@@ -586,19 +591,24 @@ This repository is licensed under the MIT License.
         global_rms = torch.stack(rms_values).mean().item()
 
         # Compute mask statistics
-        masks = self._compute_masks()
-        mask_stats = self._compute_mask_stats(masks)
+        all_masks = self._compute_masks()
+        for tolerance, masks in all_masks.items():
+            mask_stats = self._compute_mask_stats(masks)
+            logger.info(f"Step {step} | Tolerance {tolerance} | Active Fraction: {mask_stats['grad_mask/active_fraction']:.4f} | Sparsity: {mask_stats['grad_mask/sparsity']:.4f}")
+            mask_stats["step"] = step
+            mask_stats["tolerance"] = tolerance
+            monitor.log(mask_stats)
 
         # Log gradient EMA
         logger.info(f"Step {step} | EMA RMS Mean: {global_rms:.4f}")
         monitor.log({"grad_ema/rms_mean": global_rms, "step": step})
 
         # Log mask statistics
-        logger.info(
-            f"Step {step} | Active Fraction: {mask_stats['grad_mask/active_fraction']:.4f} | Sparsity: {mask_stats['grad_mask/sparsity']:.4f}"
-        )
-        mask_stats["step"] = step
-        monitor.log(mask_stats)
+        # logger.info(
+        #     f"Step {step} | Active Fraction: {mask_stats['grad_mask/active_fraction']:.4f} | Sparsity: {mask_stats['grad_mask/sparsity']:.4f}"
+        # )
+        # mask_stats["step"] = step
+        # monitor.log(mask_stats)
 
 
 # Utility functions for loading masks from Hugging Face Hub
