@@ -49,6 +49,7 @@ class WandbMonitor:
             resume="allow",
             config=run_config.model_dump() if run_config else None,
             mode="offline" if config.offline else None,
+            group=config.group,
         )
 
         # Optionally, initialize sample logging attributes

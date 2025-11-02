@@ -96,3 +96,5 @@ class WandbMonitorConfig(BaseConfig):
             description="Configuration for logging extras to W&B tables. If None, no extras are logged.",
         ),
     ] = LogExtrasConfig()
+
+    group: Annotated[str | None, Field(description="Group of runs")] = None
