@@ -141,4 +141,4 @@ class WandbMonitorConfig(BaseConfig):
         Field(
             description="Configuration for logging extras to W&B tables. If None, no extras are logged.",
         ),
-    ] = LogExtrasConfig()
+    ] = None
