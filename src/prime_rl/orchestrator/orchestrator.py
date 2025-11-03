@@ -24,6 +24,7 @@ from prime_rl.utils.vf import generate_batch
 from prime_rl.utils.client import (
     check_has_model,
     check_health,
+    init_nccl_broadcast,
     reload_weights,
     setup_admin_clients,
     setup_clients,
@@ -114,6 +115,15 @@ async def orchestrate(config: OrchestratorConfig):
     await check_has_model(clients, config.model.name)
     logger.success("Inference pool ready")
 
+    # Set up weight broadcast backend
+    if config.weight_broadcast.type == "nccl":
+        logger.info(f"Initializing NCCL broadcast ({config.weight_broadcast})")
+        await init_nccl_broadcast(
+            admin_clients, config.weight_broadcast.host, config.weight_broadcast.port, config.weight_broadcast.timeout
+        )
+    else:
+        logger.info("Using filesystem for broadcasting weights into the inference pool.")
+
     # Get checkpoint manager
     logger.info(f"Initializing checkpoint manager ({config.ckpt})")
     ckpt_manager = setup_ckpt_manager(config.output_dir, config.ckpt)
@@ -122,9 +132,9 @@ async def orchestrate(config: OrchestratorConfig):
     progress = Progress()
     ckpt_step = 0
     if config.ckpt and ckpt_manager and config.ckpt.resume_step:
-        logger.info(f"Resuming training from checkpoint step `{config.ckpt.resume_step}`")
         ckpt_manager.load(progress, buffer, step=config.ckpt.resume_step)
-        ckpt_step = max(progress.step - config.async_level, 0)
+        logger.info(f"Resuming training from checkpoint step `{config.ckpt.resume_step}`")
+        ckpt_step = progress.step  # Always resume from the latest checkpoint
         await update_weights(admin_clients, get_step_path(get_weights_dir(config.output_dir), ckpt_step))
     else:
         logger.info("Training from scratch. Resetting weights to base model")
@@ -159,28 +169,30 @@ async def orchestrate(config: OrchestratorConfig):
         if config.max_steps and progress.step >= config.max_steps:
             break
 
-        logger.info(f"Starting orchestrator step {progress.step} ({ckpt_step=})")
+        logger.info(f"Starting orchestrator step {progress.step}")
         step_start_time = time.time()
 
-        # Optionally, wait for the next checkpoint to be available
+        # If we hit the async barrier, update the inference pool weights with the correct policy
         wait_for_weight_ckpt_time, update_weights_time = 0, 0
         if progress.step - ckpt_step > config.async_level:
             logger.debug(
                 f"Hit async barrier because step {progress.step} is {progress.step - ckpt_step} (>{config.async_level}) steps ahead of checkpoint step {ckpt_step}."
             )
-
-            # Wait for the checkpoint to be available
             ckpt_step = progress.step - config.async_level
-            logger.info(f"Waiting for weight checkpoint {ckpt_step}")
-            wait_for_weight_ckpt_start_time = time.time()
-            await wait_for_path(get_step_path(get_weights_dir(config.output_dir), ckpt_step) / "STABLE")
-            wait_for_weight_ckpt_time = time.time() - wait_for_weight_ckpt_start_time
-            logger.debug(f"Waited {wait_for_weight_ckpt_time:.2f}s for weight checkpoint")
+
+            # Wait for the checkpoint to be available on disk
+            if config.weight_broadcast.type == "filesystem":
+                logger.info(f"Waiting for weight checkpoint {ckpt_step}")
+                wait_for_weight_ckpt_start_time = time.time()
+                await wait_for_path(get_step_path(get_weights_dir(config.output_dir), ckpt_step) / "STABLE")
+                wait_for_weight_ckpt_time = time.time() - wait_for_weight_ckpt_start_time
+                logger.debug(f"Waited {wait_for_weight_ckpt_time:.2f}s for weight checkpoint")
 
             # Update the weights
             logger.info(f"Updating weights to weight checkpoint {ckpt_step}")
             update_weights_start_time = time.time()
-            await update_weights(admin_clients, get_step_path(get_weights_dir(config.output_dir), ckpt_step))
+            weight_dir = get_step_path(get_weights_dir(config.output_dir), ckpt_step)
+            await update_weights(admin_clients, weight_dir if config.weight_broadcast.type == "filesystem" else None)
             update_weights_time = time.time() - update_weights_start_time
             logger.debug(f"Updated weights in {update_weights_time:.2f}s")
 
