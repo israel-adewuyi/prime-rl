@@ -6,7 +6,7 @@ from loguru import logger
 # Import environment before any other imports
 # ruff: noqa: I001,F401
 from prime_rl.orchestrator import envs
-from prime_rl.orchestrator.utils import monkey_patch_chat_completion_logprobs
+from prime_rl.orchestrator.utils import get_train_sampling_args, monkey_patch_chat_completion_logprobs
 
 # This monkey patch is necessary to avoid heavy CPU overhead from constructing the OAI ChatCompletion Pydantic model with logprobs
 monkey_patch_chat_completion_logprobs()
@@ -30,7 +30,7 @@ from prime_rl.utils.client import (
     setup_evals_client,
     update_weights,
 )
-from prime_rl.orchestrator.config import OrchestratorConfig
+from prime_rl.orchestrator.config import OrchestratorConfig, SimpleBufferConfig
 from prime_rl.orchestrator.buffer import setup_buffer, Rollout
 from prime_rl.orchestrator.batch import prepare_batch
 from prime_rl.utils.logger import setup_logger
@@ -101,10 +101,12 @@ async def orchestrate(config: OrchestratorConfig):
         env_names=[env.name or env.id for env in config.env],
     )
     dataset = env.get_dataset(seed=config.seed)
+    val_dataset = env.get_eval_dataset(config.val.num_examples, seed=config.seed) if config.val else None
 
     # Setup buffer
     logger.info(f"Setting up buffer ({config.buffer})")
     buffer = setup_buffer(dataset, config.buffer)
+    val_buffer = setup_buffer(val_dataset, SimpleBufferConfig()) if val_dataset else None
 
     # Check health of the client
     logger.info("Waiting for inference pool to be ready")
@@ -131,7 +133,6 @@ async def orchestrate(config: OrchestratorConfig):
     # Iterate over dataset in batches
     max_steps = config.max_steps or int(1e9)
     logger.info(f"Starting orchestrator loop ({max_steps=}")
-    ckpt_step = 0
     last_eval_step = -1
     is_first_step = True
     semaphore = asyncio.Semaphore(config.max_concurrent) if config.max_concurrent is not None else None
@@ -184,31 +185,51 @@ async def orchestrate(config: OrchestratorConfig):
             logger.debug(f"Updated weights in {update_weights_time:.2f}s")
 
         # Optionally, run online evals at the specified interval
-        eval_time = 0
         if (
             config.eval
-            and config.eval.interval
             and ckpt_step % config.eval.interval == 0
             and ckpt_step > last_eval_step
             and ((ckpt_step == 0 and config.eval.eval_base_model) or ckpt_step > 0)
         ):
             last_eval_step = ckpt_step
             logger.info(f"Running evals for checkpoint step {ckpt_step}")
-            eval_start_time = time.time()
-            await run_evals(
-                clients=clients,
-                eval_config=config.eval,
-                model_config=config.model,
-                sampling_config=config.eval.sampling,
-                client_config=config.client,
-                evals_client=evals_client,
-                output_dir=config.output_dir,
-                ckpt_step=ckpt_step,
-                step=progress.step,
-                semaphore=semaphore,
+            run_eval_task = asyncio.create_task(
+                run_evals(
+                    clients=clients,
+                    eval_config=config.eval,
+                    model_config=config.model,
+                    sampling_config=config.eval.sampling,
+                    client_config=config.client,
+                    evals_client=evals_client,
+                    output_dir=config.output_dir,
+                    ckpt_step=ckpt_step,
+                    step=progress.step,
+                    semaphore=semaphore,
+                )
             )
-            eval_time = time.time() - eval_start_time
-            logger.info(f"Evaluated in {eval_time:.2f}s")
+        else:
+            run_eval_task = asyncio.create_task(asyncio.sleep(0))  # Dummy task
+
+        # Get training sampling args
+        sampling_args = get_train_sampling_args(config.sampling)
+
+        if val_buffer and config.val and progress.step % config.val.interval == 0:
+            logger.info(f"Running validation for step {progress.step}")
+            val_problems = val_buffer.sample_problems(config.val.num_examples)
+            run_val_task = asyncio.create_task(
+                generate_batch(
+                    clients=clients,
+                    env=env,
+                    model_name=config.model.name,
+                    problems=val_problems,
+                    rollouts_per_example=config.val.rollouts_per_example,
+                    sampling_args=sampling_args,
+                    semaphore=semaphore,
+                    pbar_description="Generating rollouts (val)",
+                )
+            )
+        else:
+            run_val_task = asyncio.create_task(asyncio.sleep(0))  # Dummy task
 
         accepted_rollouts: list[Rollout] = []
         problem_requests, completion_requests, calls_to_generate = 0, 0, 0
@@ -217,19 +238,6 @@ async def orchestrate(config: OrchestratorConfig):
         while True:
             # Get the batch
             problems = buffer.sample_problems(problems_to_sample)
-
-            # Convert SamplingConfig to vLLM OAI sampling args
-            # https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html#extra-parameters_2
-            sampling_args = dict(config.sampling)
-            sampling_args["top_p"] = 1.0
-            sampling_args["logprobs"] = True
-            sampling_args["extra_body"] = {
-                "return_tokens_as_token_ids": True,
-                "top_k": -1,
-                "min_p": 0.0,
-            }
-            sampling_args["extra_body"]["min_tokens"] = sampling_args.pop("min_tokens")
-            sampling_args["extra_body"]["repetition_penalty"] = sampling_args.pop("repetition_penalty")
 
             # Generate completions + rewards with verifiers
             generate_completions_start_time = time.time()
@@ -241,6 +249,7 @@ async def orchestrate(config: OrchestratorConfig):
                 rollouts_per_example=config.rollouts_per_example,
                 sampling_args=sampling_args,
                 semaphore=semaphore,
+                pbar_description="Generating rollouts (train)",
             )
             generate_completions_time = time.time() - generate_completions_start_time
             problem_requests += problems_to_sample
@@ -293,7 +302,7 @@ async def orchestrate(config: OrchestratorConfig):
 
         # Write serialized batch to disk for trainer workers to consume
         all_data_ranks_batches = prepare_batch(
-            rollouts=rollouts,
+            rollouts=accepted_rollouts,
             temperature=config.sampling.temperature,
             tokenizer=tokenizer,
             num_train_workers=config.num_train_workers,
@@ -308,6 +317,25 @@ async def orchestrate(config: OrchestratorConfig):
             logger.debug(f"Saving rollouts for step {progress.step} for rank {i} to {batch_path}")
             torch.save(batches, tmp_path)
             tmp_path.rename(batch_path)
+
+        # Process validation results
+        await run_val_task
+        val_outputs = run_val_task.result()
+        val_results_df = (
+            pd.DataFrame(
+                {
+                    "example_id": val_outputs.example_id,
+                    "task": val_outputs.task,
+                    "reward": val_outputs.reward,
+                }
+            )
+            if val_outputs is not None
+            else None
+        )
+
+        # Process evaluation results
+        await run_eval_task
+        run_eval_task.result()
 
         # Gather train results in a dataframe
         results_df = pd.DataFrame(
@@ -374,6 +402,7 @@ async def orchestrate(config: OrchestratorConfig):
             "perf/problem_requests": problem_requests,
             "perf/completion_requests": completion_requests,
             "perf/calls_to_generate": calls_to_generate,
+            # Train reward
             "reward/mean": results_df.reward.mean(),
             # Batch metrics
             "batch/solve_none": solve_none,
@@ -385,9 +414,7 @@ async def orchestrate(config: OrchestratorConfig):
             "time/generate_completions": generate_completions_time,
             "time/update_weights": update_weights_time,
             "time/save_ckpt": save_ckpt_time,
-            "time/eval": eval_time,
             # W&B axis
-            "ckpt_step": ckpt_step,
             "step": progress.step,
         }
 
@@ -398,6 +425,17 @@ async def orchestrate(config: OrchestratorConfig):
 
             per_env_count = results_df.task.value_counts().to_dict()
             metrics.update({f"batch/{env}": count for env, count in per_env_count.items()})
+
+        # Optionally, add validation reward
+        if val_results_df is not None:
+            metrics.update({"val_reward/mean": val_results_df.reward.mean()})
+
+            if val_results_df.task.nunique() > 1:
+                per_env_reward = val_results_df.groupby("task").reward.mean().to_dict()
+                metrics.update({f"val_reward/{env}": reward for env, reward in per_env_reward.items()})
+
+                per_env_count = val_results_df.task.value_counts().to_dict()
+                metrics.update({f"val_batch/{env}": count for env, count in per_env_count.items()})
 
         # Log metrics to W&B
         monitor.log(metrics)
@@ -422,7 +460,7 @@ async def orchestrate(config: OrchestratorConfig):
         # Log distributions to W&B table
         monitor.log_distributions(distributions=distributions, step=progress.step)
 
-        step_message = f"Step {progress.step} | Time: {step_time:.2f}s | Reward: {results_df.reward.mean():.4f} | Throughput: {throughput:.1f} tokens/s | Seq. Length: {results_df.seq_len.mean():.1f} tokens/sample"
+        step_message = f"Step {progress.step} | Time: {step_time:.2f}s | Reward: {results_df.reward.mean():.4f} |{f' Val. Reward: {val_results_df.reward.mean():.4f} |' if val_results_df is not None else ''} Throughput: {throughput:.1f} tokens/s | Seq. Length: {results_df.seq_len.mean():.1f} tokens/sample"
         logger.success(step_message)
 
         # Increment step
