@@ -70,6 +70,13 @@ class NCCLWeightBroadcastConfig(BaseModel):
 WeightBroadcastConfigType: TypeAlias = FileSystemWeightBroadcastConfig | NCCLWeightBroadcastConfig
 
 
+class MaskTrainConfig(BaseModel):
+    step: Annotated[int, Field(description="The mask step being installed")] = 5
+    beta: Annotated[float, Field(description="Beta term for the mask to be downloaded ")] = 0.99
+    repo_id: Annotated[str, Field(description="Path to the HF repo from which to load the masks")] = "None"
+    tolerance: Annotated[float, Field(description="The mask tolerance being downloaded")] = 1e-2
+
+
 class RLTrainerConfig(BaseSettings):
     """Configures the RL trainer"""
 
@@ -103,6 +110,8 @@ class RLTrainerConfig(BaseSettings):
 
     # The wandb configuration
     wandb: WandbMonitorConfig | None = None
+
+    load_mask: MaskTrainConfig = MaskTrainConfig()
 
     output_dir: Annotated[
         Path,

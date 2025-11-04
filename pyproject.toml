@@ -38,6 +38,7 @@ dependencies = [
     "verifiers>=0.1.5",
     "prime-evals>=0.1.2",
     "flash-attn>=2.8.3",
+    "hf-transfer>=0.1.9",
 ]
 
 [project.scripts]

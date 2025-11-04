@@ -1,6 +1,6 @@
 import pickle
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from rich import print as rich_print
 from rich.console import Console
 from rich.table import Table
@@ -227,3 +228,123 @@ class MemoryProfiler:
             f"Finished dumping memory snapshot in {time.monotonic() - begin:.2f} seconds, load {file_path} at https://docs.pytorch.org/memory_viz to visualize the memory usage"
         )
         self.step_num += 1
+
+
+def load_masks_from_hf(config) -> OrderedDict:
+    """
+    Load gradient masks from Hugging Face Hub.
+
+    Args:
+        repo_id: Hugging Face repository ID containing the masks
+        step: Training step to load masks for
+        cache_dir: Optional cache directory for downloads
+
+    Returns:
+        OrderedDict containing boolean masks for each parameter
+
+    Example:
+        >>> masks = load_masks_from_hf("username/model-gradient-masks", 1000)
+        >>> for name, param in model.named_parameters():
+        ...     if name in masks:
+        ...         mask = masks[name].to(param.device)
+        ...         param.requires_grad = mask
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
+
+    filename = f"masks/beta_{config.beta}_step_{config.step}_tolerance_{config.tolerance}.pt"
+
+    mask_path = hf_hub_download(repo_id=config.repo_id, filename=filename, repo_type="model", cache_dir=None)
+
+    return torch.load(mask_path, map_location="cpu")
+
+
+def verify_masking(model: nn.Module, masks: OrderedDict, num_params: int = 3):
+    """
+    Simple verification that masks are correctly applied to gradients.
+    Checks that False mask positions have zero gradients.
+    """
+    logger = get_logger()
+
+    logger.info("\n" + "=" * 60)
+    logger.info("MASKING VERIFICATION")
+    logger.info("=" * 60)
+
+    checked = 0
+    all_passed = True
+
+    for name, param in model.named_parameters():
+        if checked >= num_params or param.grad is None or name not in masks:
+            continue
+
+        # Get gradient and mask
+        grad = param.grad.to_local() if hasattr(param.grad, "to_local") else param.grad
+        mask = masks[name].to(grad.device)
+
+        if grad.shape != mask.shape:
+            continue
+
+        # Find where mask is False (should be zero)
+        mask_bool = mask.bool() if mask.dtype == torch.bool else (mask != 0)
+        masked_positions = ~mask_bool
+
+        # Check if those positions are zero in gradient
+        grads_at_masked = grad[masked_positions]
+        num_masked = masked_positions.sum().item()
+        num_zero = (grads_at_masked.abs() < 1e-10).sum().item()
+
+        passed = num_zero == num_masked
+        status = "✅" if passed else "❌"
+        all_passed = all_passed and passed
+
+        logger.info(f"{status} {name}: {num_zero}/{num_masked} masked positions are zero")
+
+        if not passed:
+            # Show a few non-zero values for debugging
+            nonzero_vals = grads_at_masked[grads_at_masked.abs() >= 1e-10][:3]
+            logger.info(f"   Sample non-zero values: {nonzero_vals}")
+
+        checked += 1
+
+    logger.info("=" * 60)
+    logger.info(f"Overall: {'✅ PASSED' if all_passed else '❌ FAILED'}")
+    logger.info("=" * 60 + "\n")
+
+    return all_passed
+
+
+def mask_gradients_in_optimizer(optimizer, masks: OrderedDict, model: nn.Module, verify_first_step: bool = True):
+    """Apply masks in optimizer step with optional one-time verification"""
+
+    original_step = optimizer.step
+    first_step = [True]  # Track if this is first step
+
+    def step_with_masking(closure=None):
+        # Apply masks
+        for group in optimizer.param_groups:
+            for param in group["params"]:
+                if param.grad is not None:
+                    # Find parameter name
+                    param_name = None
+                    for name, p in model.named_parameters():
+                        if p is param:
+                            param_name = name
+                            break
+
+                    if param_name and param_name in masks:
+                        mask = masks[param_name].to(param.grad.device)
+                        if hasattr(param.grad, "to_local"):
+                            param.grad.to_local().mul_(mask)
+                        else:
+                            param.grad.mul_(mask)
+
+        # Verify on first step only
+        if verify_first_step and first_step[0]:
+            verify_masking(model, masks, num_params=5)
+            first_step[0] = False
+
+        return original_step(closure)
+
+    optimizer.step = step_with_masking

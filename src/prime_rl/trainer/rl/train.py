@@ -40,6 +40,7 @@ from prime_rl.trainer.utils import (
     get_response_lengths,
 )
 from prime_rl.trainer.world import get_world
+from prime_rl.trainer.utils import load_masks_from_hf, mask_gradients_in_optimizer
 from prime_rl.utils.monitor import setup_monitor
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.utils.utils import clean_exit, to_col_format
@@ -89,6 +90,10 @@ def train(config: RLTrainerConfig):
     # Set up the learning rate scheduler
     scheduler = setup_scheduler(optimizer, config.scheduler, config.max_steps, config.optim.lr)
     logger.info(f"Using `{config.scheduler.type}` scheduler ({config.scheduler})")
+
+    # Load mask and apply to optimizer
+    mask = load_masks_from_hf(config.load_mask)
+    mask_gradients_in_optimizer(optimizer, mask, model, verify_first_step=True)
 
     # Set up weight checkpoint manager
     logger.info(f"Initializing weight checkpoint manager ({config.weights})")
