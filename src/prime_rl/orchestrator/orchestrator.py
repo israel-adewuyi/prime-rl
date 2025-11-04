@@ -41,7 +41,7 @@ from prime_rl.orchestrator.utils import (
     print_benchmark,
     parse_is_truncated_completions,
 )
-from prime_rl.utils.monitor import setup_monitor
+from prime_rl.utils.monitor import setup_monitor_tensorboard
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.utils.utils import (
     clean_exit,
@@ -86,7 +86,7 @@ async def orchestrate(config: OrchestratorConfig):
 
     # Setup monitor
     logger.info(f"Initializing monitor ({config.wandb})")
-    monitor = setup_monitor(
+    monitor = setup_monitor_tensorboard(
         config.wandb,
         output_dir=config.output_dir,
         tokenizer=tokenizer,

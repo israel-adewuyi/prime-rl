@@ -4,14 +4,16 @@ import random
 import sys
 import time
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PosixPath
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import wandb
+from torch.utils.tensorboard import SummaryWriter
 from transformers.tokenization_utils import PreTrainedTokenizer
 
-from prime_rl.utils.config import WandbMonitorConfig
+from prime_rl.utils.config import TensorboardMonitorConfig, WandbMonitorConfig
 from prime_rl.utils.logger import get_logger
 from prime_rl.utils.pydantic_config import BaseSettings
 
@@ -273,3 +275,301 @@ def setup_monitor(
         raise RuntimeError("WandbMonitor already initialized. Please call `setup_monitor` only once.")
     _MONITOR = WandbMonitor(config=config, output_dir=output_dir, tokenizer=tokenizer, run_config=run_config)
     return _MONITOR
+
+
+class TensorboardMonitor:
+    """Logs to TensorBoard."""
+
+    def __init__(
+        self,
+        config: TensorboardMonitorConfig | None,
+        output_dir: Path | None = None,
+        tokenizer: PreTrainedTokenizer | None = None,
+        run_config: BaseSettings | None = None,
+    ):
+        self.config = config
+        self.logger = get_logger()
+        self.history: list[dict[str, Any]] = []
+        self.output_dir = output_dir
+
+        rank = int(os.environ.get("RANK", os.environ.get("DP_RANK", "0")))
+        self.enabled = self.config is not None
+        self.is_master = rank == 0
+        if not self.enabled or not self.is_master:
+            if not self.is_master:
+                self.logger.warning(f"Skipping {self.__class__.__name__} initialization from non-master rank ({rank})")
+            return
+        assert config is not None
+        self.logger.info(f"Initializing {self.__class__.__name__} ({config})")
+
+        # Initialize TensorBoard writer
+        log_dir = output_dir / config.log_dir if output_dir else Path(config.log_dir)
+        if config.name:
+            log_dir = log_dir / config.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        self.writer = SummaryWriter(log_dir=str(log_dir))
+
+        # Log run config as text
+        if run_config:
+            config_data = run_config.model_dump()
+            config_data_str = convert_posix_to_str(config_data)
+            config_str = json.dumps(config_data_str, indent=2)
+            # config_str = json.dumps(run_config.model_dump(), indent=2)
+            self.writer.add_text("config", f"```json\n{config_str}\n```", 0)
+
+        # Optionally, initialize sample logging attributes
+        if config is not None and config.log_extras:
+            if config.log_extras.samples:
+                self.last_log_samples_step = -1
+                self.tokenizer = tokenizer
+                self.samples = []
+
+            if config is not None and config.log_extras.distributions:
+                self.last_log_distributions_step = -1
+                self.distributions = []
+
+    def log(self, metrics: dict[str, Any]) -> None:
+        self.history.append(metrics)
+        if not self.is_master:
+            return
+        if not self.enabled:
+            return
+
+        step = metrics.get("step", None)
+        for key, value in metrics.items():
+            if key == "step":
+                continue
+            # Handle different types of values
+            if isinstance(value, (int, float)):
+                self.writer.add_scalar(key, value, step)
+            elif isinstance(value, dict):
+                # Log nested dictionaries with hierarchical keys
+                for sub_key, sub_value in value.items():
+                    if isinstance(sub_value, (int, float)):
+                        self.writer.add_scalar(f"{key}/{sub_key}", sub_value, step)
+
+    def log_samples(
+        self,
+        input_tokens: list[list[int]],
+        output_tokens: list[list[int]],
+        rewards: list[float],
+        advantages: list[float],
+        rollouts_per_problem: int,
+        step: int,
+    ) -> None:
+        """Log prompt/response samples to TensorBoard.
+
+        Args:
+            input_tokens: List of input token sequences
+            output_tokens: List of output token sequences
+            rewards: List of rewards for each sample
+            advantages: List of advantages for each sample
+            rollouts_per_problem: Number of rollouts per problem
+            step: Current training step
+        """
+        if not self.is_master:
+            return
+        if (
+            not self.config
+            or not self.config.log_extras
+            or not self.config.log_extras.samples
+            or step % self.config.log_extras.interval != 0
+        ):
+            return
+        assert self.tokenizer is not None, "Tokenizer is required for sample logging"
+        assert self.last_log_samples_step <= step, "Step must be greater than last logged step"
+        assert self.logger is not None, "Logger is required for sample logging"
+        self.logger.info(f"Logging samples to TensorBoard at step {step}")
+        start_time = time.time()
+        batch_size = len(input_tokens)
+        num_problems = batch_size // rollouts_per_problem
+
+        # Compute per-problem statistics
+        per_problem_tokens = defaultdict(list)
+        tokens = [input_tokens[i] + output_tokens[i] for i in range(batch_size)]
+        for i, t in enumerate(tokens):
+            problem_id = i // rollouts_per_problem
+            per_problem_tokens[problem_id].append(t)
+        assert len(per_problem_tokens) == num_problems
+        assert list(per_problem_tokens.keys()) == list(range(num_problems))
+
+        per_problem_seq_len = {
+            problem_id: sum(len(t) for t in tokens) / len(tokens) for problem_id, tokens in per_problem_tokens.items()
+        }
+        self.logger.debug(f"Per-problem seq len: {per_problem_seq_len}")
+        min_len_problem_id = min(per_problem_seq_len.items(), key=lambda kv: kv[1])[0]
+        max_len_problem_id = max(per_problem_seq_len.items(), key=lambda kv: kv[1])[0]
+        random_problem_id = random.choice(list(range(num_problems)))
+        problem_ids = {
+            "min_len": min_len_problem_id,
+            "max_len": max_len_problem_id,
+            "random": random_problem_id,
+        }
+        self.logger.debug(f"Logging samples for problems: {problem_ids}")
+
+        # Randomly select and log samples as text
+        sample_texts = []
+        for tag, problem_id in problem_ids.items():
+            start_idx = problem_id * rollouts_per_problem
+            for sample_id in range(start_idx, start_idx + rollouts_per_problem):
+                prompt = self.tokenizer.decode(input_tokens[sample_id])
+                completion = self.tokenizer.decode(output_tokens[sample_id])
+
+                sample = {
+                    "step": step,
+                    "tag": tag,
+                    "problem_id": problem_id,
+                    "sample_id": sample_id,
+                    "num_input_tokens": len(input_tokens[sample_id]),
+                    "num_output_tokens": len(output_tokens[sample_id]),
+                    "prompt": prompt,
+                    "completion": completion,
+                    "reward": float(rewards[sample_id]),
+                    "advantage": float(advantages[sample_id]),
+                }
+                self.samples.append(sample)
+
+                # Format as markdown text for TensorBoard
+                sample_text = f"""
+### Sample {sample_id} (Tag: {tag}, Problem: {problem_id})
+**Tokens:** {sample["num_input_tokens"]} input + {sample["num_output_tokens"]} output  
+**Reward:** {sample["reward"]:.4f}  
+**Advantage:** {sample["advantage"]:.4f}
+
+**Prompt:**
+```
+{prompt}
+```
+
+**Completion:**
+```
+{completion}
+```
+---
+"""
+                sample_texts.append(sample_text)
+
+        # Log all samples as a single text entry
+        combined_text = "\n".join(sample_texts)
+        self.writer.add_text(f"samples/step_{step}", combined_text, step)
+
+        self.last_log_samples_step = step
+        self.logger.debug(f"Logged samples at step {step} to TensorBoard in {time.time() - start_time:.2f}s")
+
+    def log_distributions(self, distributions: dict[str, list[float]], step: int) -> None:
+        if not self.is_master:
+            return
+        if (
+            not self.config
+            or not self.config.log_extras
+            or not self.config.log_extras.distributions
+            or step % self.config.log_extras.interval != 0
+        ):
+            return
+        assert self.last_log_distributions_step <= step, "Step must be greater than last logged step"
+        self.logger.info(f"Logging distributions for keys {list(distributions.keys())} to TensorBoard at step {step}")
+
+        start_time = time.time()
+
+        # Log distributions as histograms
+        for key, values in distributions.items():
+            if isinstance(values, list):
+                # Option 1: Convert to numpy array
+                values = np.array(values)
+                self.writer.add_histogram(f"distributions/{key}", values, step)
+
+        # Store for final logging
+        row = {"step": step, **distributions}
+        self.distributions.append(row)
+
+        self.last_log_distributions_step = step
+        self.logger.debug(f"Logged distributions at step {step} to TensorBoard in {time.time() - start_time:.2f}s")
+
+    def log_final_samples(self) -> None:
+        """Save final samples to CSV."""
+        if not self.is_master:
+            return
+        if not self.config or not self.config.log_extras or not self.config.log_extras.samples:
+            return
+        self.logger.info("Saving final samples to CSV")
+        if self.samples and self.output_dir:
+            df = pd.DataFrame(self.samples)
+            output_path = self.output_dir / "final_samples.csv"
+            df.to_csv(output_path, index=False)
+            self.logger.info(f"Saved final samples to {output_path}")
+
+    def log_final_distributions(self) -> None:
+        """Save final distributions to CSV."""
+        if not self.is_master:
+            return
+        if not self.config or not self.config.log_extras or not self.config.log_extras.distributions:
+            return
+        self.logger.info("Saving final distributions to CSV")
+        if self.distributions and self.output_dir:
+            df = pd.DataFrame(self.distributions)
+            output_path = self.output_dir / "final_distributions.csv"
+            df.to_csv(output_path, index=False)
+            self.logger.info(f"Saved final distributions to {output_path}")
+
+    def save_final_summary(self, filename: str = "final_summary.json") -> None:
+        """Save final summary to JSON file."""
+        if not self.is_master or not self.enabled:
+            return
+        self.logger.info("Saving final summary to file")
+        assert self.output_dir is not None, "Output directory is required for saving final summary"
+
+        # Create summary from history
+        summary = {}
+        if self.history:
+            # Get final values for each metric
+            for entry in self.history:
+                for key, value in entry.items():
+                    if isinstance(value, (int, float)):
+                        summary[f"final_{key}"] = value
+
+        dir_path = self.output_dir / "tensorboard_summary"
+        dir_path.mkdir(parents=True, exist_ok=True)
+        with open(dir_path / filename, "w") as f:
+            json.dump(summary, f, indent=2)
+
+    def close(self) -> None:
+        """Close the TensorBoard writer."""
+        if self.is_master and self.enabled:
+            self.writer.close()
+
+
+_MONITOR: TensorboardMonitor | None = None
+
+
+# def get_monitor() -> TensorboardMonitor:
+#     """Returns the global monitor."""
+#     global _MONITOR
+#     if _MONITOR is None:
+#         raise RuntimeError("TensorboardMonitor not initialized. Please call `setup_monitor` first.")
+#     return _MONITOR
+
+
+def setup_monitor_tensorboard(
+    config: TensorboardMonitorConfig | None,
+    output_dir: Path | None = None,
+    tokenizer: PreTrainedTokenizer | None = None,
+    run_config: BaseSettings | None = None,
+) -> TensorboardMonitor:
+    """Sets up a monitor to log metrics to TensorBoard."""
+    global _MONITOR
+    if _MONITOR is not None:
+        raise RuntimeError("TensorboardMonitor already initialized. Please call `setup_monitor` only once.")
+    _MONITOR = TensorboardMonitor(config=config, output_dir=output_dir, tokenizer=tokenizer, run_config=run_config)
+    return _MONITOR
+
+
+def convert_posix_to_str(obj):
+    if isinstance(obj, dict):
+        return {k: convert_posix_to_str(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_posix_to_str(v) for v in obj]
+    elif isinstance(obj, PosixPath):
+        return str(obj)
+    else:
+        return obj

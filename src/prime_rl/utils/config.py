@@ -142,3 +142,25 @@ class WandbMonitorConfig(BaseConfig):
             description="Configuration for logging extras to W&B tables. If None, no extras are logged.",
         ),
     ] = None
+
+
+class TensorboardMonitorConfig(BaseConfig):
+    """Configures logging to TensorBoard."""
+
+    project: Annotated[str, Field(description="The W&B project to log to.")] = "prime-rl"
+
+    log_dir: Annotated[str, Field(description="The directory to save TensorBoard logs to.")] = "runs"
+
+    name: Annotated[
+        str | None,
+        Field(
+            description="The run name to use for logging (creates a subdirectory).",
+        ),
+    ] = None
+
+    log_extras: Annotated[
+        LogExtrasConfig | None,
+        Field(
+            description="Configuration for logging extras to TensorBoard. If None, no extras are logged.",
+        ),
+    ] = LogExtrasConfig()
