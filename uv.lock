@@ -2168,6 +2168,8 @@ dependencies = [
     { name = "pylatexenc" },
     { name = "reverse-text" },
     { name = "rich" },
+    { name = "tensorboard" },
+    { name = "tensorboardx" },
     { name = "textarena" },
     { name = "tomli" },
     { name = "tomli-w" },
@@ -2215,6 +2217,8 @@ requires-dist = [
     { name = "reverse-text", index = "https://hub.primeintellect.ai/primeintellect/simple/" },
     { name = "reverse-text", specifier = ">=0.1.4", index = "https://hub.primeintellect.ai/primeintellect/simple/" },
     { name = "rich", specifier = ">=14.0.0" },
+    { name = "tensorboard", specifier = ">=2.20.0" },
+    { name = "tensorboardx", specifier = ">=2.6.4" },
     { name = "textarena", specifier = ">=0.6.16" },
     { name = "tomli", specifier = ">=2.2.1" },
     { name = "tomli-w", specifier = ">=1.2.0" },
@@ -3105,6 +3109,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/7a/13/e503968fefabd4c6b2650af21e110aa8466fe21432cd7c43a84577a89438/tensorboard_data_server-0.7.2-py3-none-any.whl", hash = "sha256:7e0610d205889588983836ec05dc098e80f97b7e7bbff7e994ebb78f578d0ddb", size = 2356, upload-time = "2023-10-23T21:23:32.16Z" },
     { url = "https://files.pythonhosted.org/packages/b7/85/dabeaf902892922777492e1d253bb7e1264cadce3cea932f7ff599e53fea/tensorboard_data_server-0.7.2-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:9fe5d24221b29625dbc7328b0436ca7fc1c23de4acf4d272f1180856e32f9f60", size = 4823598, upload-time = "2023-10-23T21:23:33.714Z" },
     { url = "https://files.pythonhosted.org/packages/73/c6/825dab04195756cf8ff2e12698f22513b3db2f64925bdd41671bfb33aaa5/tensorboard_data_server-0.7.2-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:ef687163c24185ae9754ed5650eb5bc4d84ff257aabdc33f0cc6f74d8ba54530", size = 6590363, upload-time = "2023-10-23T21:23:35.583Z" },
+]
+
+[[package]]
+name = "tensorboardx"
+version = "2.6.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2b/c5/d4cc6e293fb837aaf9f76dd7745476aeba8ef7ef5146c3b3f9ee375fe7a5/tensorboardx-2.6.4.tar.gz", hash = "sha256:b163ccb7798b31100b9f5fa4d6bc22dad362d7065c2f24b51e50731adde86828", size = 4769801, upload-time = "2025-06-10T22:37:07.419Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/1d/b5d63f1a6b824282b57f7b581810d20b7a28ca951f2d5b59f1eb0782c12b/tensorboardx-2.6.4-py3-none-any.whl", hash = "sha256:5970cf3a1f0a6a6e8b180ccf46f3fe832b8a25a70b86e5a237048a7c0beb18e2", size = 87201, upload-time = "2025-06-10T22:37:05.44Z" },
 ]
 
 [[package]]

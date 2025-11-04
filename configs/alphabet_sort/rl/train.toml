@@ -1,13 +1,17 @@
-max_steps = 500
-
-[wandb]
-project = "alphabet-sort"
+max_steps = 100
 
 [model]
-name = "Qwen/Qwen2.5-3B-Instruct"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [optim]
 lr = 1e-6
 
-[ckpt]
-interval = 100
+[wandb]
+project = "primerl"
+name = "train_test_run"
+
+[load_mask]
+repo_id = "israel-adewuyi/Qwen2.5-0.5B-Instruct-grad_masks"
+beta = 0.99
+step = 100
+tolerance = 1e-06
