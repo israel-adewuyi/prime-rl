@@ -24,6 +24,20 @@ class ActivationCheckpointConfig(BaseModel):
     ] = 1
 
 
+class ActivationOffloadingConfig(BaseModel):
+    """Configures the activation offloading."""
+
+    pin_memory: Annotated[bool, Field(description="Whether to pin the offloaded activations to CPU memory.")] = True
+
+    max_inflight_activations: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="The maximum number of activations to keep in while offloading further. (More activations means smoother overlap, but more gpu memory usage)",
+        ),
+    ] = 5
+
+
 class CompileConfig(BaseModel):
     """Configures model compilation."""
 
