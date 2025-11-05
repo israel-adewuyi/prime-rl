@@ -1,4 +1,4 @@
-max_steps = 100
+max_steps = 45
 batch_size = 64
 seq_len = 2048
 rollouts_per_example = 16
@@ -9,7 +9,7 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [wandb]
 project = "primerl"
-name = "orch_test_run"
+name = "orch_test_run_2"
 
 [[env]]
 id = "alphabet-sort"
