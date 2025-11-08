@@ -1,18 +1,18 @@
-max_steps = 45
+max_steps = 300
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
 attn = "sdpa" 
 
 [optim]
-lr = 1e-6
+lr = 1e-4
 
 [wandb]
-project = "primerl"
-name = "train_test_run_2"
+project = "alphabetsort"
+name = "train_hyperparamsweep_beta-0.99_tol-1e-7_step-5_batch-128_lr-1e-4"
 
 [load_mask]
 repo_id = "israel-adewuyi/Qwen2.5-0.5B-Instruct-grad_masks"
 beta = 0.99
-step = 100
-tolerance = 1e-06
+step = 5
+tolerance = 1e-07

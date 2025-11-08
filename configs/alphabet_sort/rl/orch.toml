@@ -1,5 +1,5 @@
-max_steps = 45
-batch_size = 64
+max_steps = 300
+batch_size = 128
 seq_len = 2048
 rollouts_per_example = 16
 mask_truncated_completions = false
@@ -8,8 +8,8 @@ mask_truncated_completions = false
 name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [wandb]
-project = "primerl"
-name = "orch_test_run_2"
+project = "alphabetsort"
+name = "orch_hyperparamsweep_beta-0.99_tol-1e-7_step-5_batch-128_lr-1e-4"
 
 [[env]]
 id = "alphabet-sort"
