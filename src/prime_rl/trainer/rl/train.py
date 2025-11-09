@@ -92,8 +92,10 @@ def train(config: RLTrainerConfig):
     logger.info(f"Using `{config.scheduler.type}` scheduler ({config.scheduler})")
 
     # Load mask and apply to optimizer
-    mask = load_masks_from_hf(config.load_mask)
-    mask_gradients_in_optimizer(optimizer, mask, model, verify_first_step=True)
+    if config.load_mask:
+        logger.info(f"Loading masks with configs {config.load_mask}")
+        mask = load_masks_from_hf(config.load_mask)
+        mask_gradients_in_optimizer(optimizer, mask, model, verify_first_step=True)
 
     # Set up weight checkpoint manager
     logger.info(f"Initializing weight checkpoint manager ({config.weights})")

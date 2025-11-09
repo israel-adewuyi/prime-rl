@@ -111,7 +111,7 @@ class RLTrainerConfig(BaseSettings):
     # The wandb configuration
     wandb: TensorboardMonitorConfig = None
 
-    load_mask: MaskTrainConfig = MaskTrainConfig()
+    load_mask: MaskTrainConfig | None = None
 
     output_dir: Annotated[
         Path,
