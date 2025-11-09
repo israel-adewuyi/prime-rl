@@ -4,13 +4,17 @@
 configs/endpoints.py
 
 # Artifacts
+**/slurm
+**/torchrun
 **/weights
 **/checkpoints
 **/rollouts
 **/logs
 **/wandb
 **/evals
+final_summary.json
 .pydantic_config
+.chroma_db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -1,6 +1,5 @@
 max_steps = 101
 batch_size = 64
-micro_batch_size = 1
 seq_len = 2048
 rollouts_per_example = 16
 mask_truncated_completions = false
@@ -18,12 +17,9 @@ samples = true
 distributions = false
 interval = 2
 
-[environment]
+[[env]]
 id = "alphabet-sort"
-
-[environment.args]
-min_turns = 2
-max_turns = 2
+args = { min_turns = 2, max_turns = 2 }
 
 [sampling]
 max_tokens = 512

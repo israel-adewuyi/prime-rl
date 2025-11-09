@@ -91,8 +91,35 @@ def _set_module_by_name(model: nn.Module, module_name: str, new_module: nn.Modul
     setattr(parent, parts[-1], new_module)
 
 
+def _has_regex_metacharacters(pattern: str) -> bool:
+    """Check if a pattern contains regex metacharacters."""
+    regex_metachars = {".", "*", "+", "?", "^", "$", "[", "]", "{", "}", "|", "(", ")", "\\"}
+    return any(char in pattern for char in regex_metachars)
+
+
+def _matches_pattern(name: str, pattern: str) -> bool:
+    """Check if a name matches a pattern.
+
+    For simple patterns (no regex metacharacters), checks if any component
+    in the module path matches the pattern exactly. For regex patterns, uses
+    re.search() to match anywhere in the name (mirroring PEFT behavior).
+
+    This handles cases where Linear layers might be nested (e.g.,
+    "model.layers.0.q_proj.linear") while still matching standard architectures
+    where they're direct children (e.g., "model.layers.0.self_attn.q_proj").
+    """
+    if _has_regex_metacharacters(pattern):
+        return re.search(pattern, name) is not None
+    else:
+        return pattern in name.split(".")
+
+
 def _find_target_modules(model: nn.Module, target_patterns: List[str]) -> List[str]:
-    """Find all module names that match any of the target regex patterns."""
+    """Find all module names that match any of the target patterns.
+
+    Patterns can be simple module names (e.g., "q_proj") or regex patterns
+    (e.g., r".*\\.q_proj$"). Simple names match any component in the module path.
+    """
     target_modules = []
 
     for name, module in model.named_modules():
@@ -100,7 +127,7 @@ def _find_target_modules(model: nn.Module, target_patterns: List[str]) -> List[s
             continue
 
         for pattern in target_patterns:
-            if re.match(pattern, name):
+            if _matches_pattern(name, pattern):
                 target_modules.append(name)
                 break
 
@@ -114,14 +141,16 @@ def _should_keep_trainable(param_name: str, modules_to_save_patterns: List[str])
     For example, for param "model.embed_tokens.weight", it checks both:
     - "model.embed_tokens.weight" (full parameter name)
     - "model.embed_tokens" (module name)
+
+    Patterns can be simple module names (e.g., "embed_tokens") or regex patterns.
     """
     for pattern in modules_to_save_patterns:
-        if re.match(pattern, param_name):
+        if _matches_pattern(param_name, pattern):
             return True
 
     module_name = param_name.rsplit(".", 1)[0] if "." in param_name else param_name
     for pattern in modules_to_save_patterns:
-        if re.match(pattern, module_name):
+        if _matches_pattern(module_name, pattern):
             return True
 
     return False
@@ -177,7 +206,7 @@ def apply_lora_to_model(model: nn.Module, config: LoRAConfig) -> None:
     target_modules = _find_target_modules(model, config.target_modules)
 
     if not target_modules:
-        logger.warning("No target modules found for LoRA. Check your target_modules regex patterns.")
+        logger.warning("No target modules found for LoRA. Check your target_modules patterns.")
         return
 
     for module_name in target_modules:
@@ -311,7 +340,7 @@ def load_lora_state_dict(model: nn.Module, lora_state_dict: Dict[str, torch.Tens
 def save_lora_config(config: LoRAConfig, model: nn.Module, save_path) -> None:
     """
     Save LoRA configuration as JSON for adapter portability.
-    
+
     Args:
         config: LoRA configuration to save
         model: Model with LoRA layers to introspect
@@ -319,23 +348,23 @@ def save_lora_config(config: LoRAConfig, model: nn.Module, save_path) -> None:
     """
     import json
     from pathlib import Path
-    
+
     save_path = Path(save_path)
-    
+
     # Extract actual target modules from the model
     target_modules = set()
     modules_to_save = set()
-    
+
     for name, module in model.named_modules():
         if isinstance(module, LoRALinear):
             module_suffix = name.split(".")[-1]
             target_modules.add(module_suffix)
-    
+
     for name, param in model.named_parameters():
         if param.requires_grad and "lora_A" not in name and "lora_B" not in name:
             module_name = name.rsplit(".", 1)[0].split(".")[-1]
             modules_to_save.add(module_name)
-    
+
     adapter_config = {
         "peft_type": "LORA",
         "task_type": "CAUSAL_LM",
@@ -347,7 +376,7 @@ def save_lora_config(config: LoRAConfig, model: nn.Module, save_path) -> None:
         "target_modules": sorted(list(target_modules)),
         "modules_to_save": sorted(list(modules_to_save)) if modules_to_save else None,
     }
-    
+
     config_path = save_path / "adapter_config.json"
     with open(config_path, "w") as f:
         json.dump(adapter_config, f, indent=2)

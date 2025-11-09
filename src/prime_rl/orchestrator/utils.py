@@ -1,19 +1,32 @@
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from openai.types.chat import ChatCompletion
-from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.completion_usage import CompletionUsage
 from rich.console import Console
 from rich.table import Table
 
+from prime_rl.orchestrator.config import SamplingConfig
 from prime_rl.utils.utils import (
     format_num,
     format_time,
-    get_weight_ckpt_model_path,
-    wait_for_path,
 )
+
+
+def get_train_sampling_args(sampling_config: SamplingConfig) -> dict:
+    # Convert SamplingConfig to vLLM OAI sampling args
+    # https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html#extra-parameters_2
+    sampling_args = dict(sampling_config)
+    sampling_args["top_p"] = 1.0
+    sampling_args["logprobs"] = True
+    sampling_args["extra_body"] = {
+        "return_tokens_as_token_ids": True,
+        "top_k": -1,
+        "min_p": 0.0,
+    }
+    sampling_args["extra_body"]["min_tokens"] = sampling_args.pop("min_tokens")
+    sampling_args["extra_body"]["repetition_penalty"] = sampling_args.pop("repetition_penalty")
+    return sampling_args
 
 
 def parse_num_completion_tokens(responses: list[list[ChatCompletion]]) -> list[int]:
@@ -48,11 +61,6 @@ def parse_is_truncated_completions(responses: list[list[ChatCompletion]]) -> lis
                 is_truncated = True
         all_is_truncated.append(is_truncated)
     return all_is_truncated
-
-
-def wait_for_weight_checkpoint(path: Path, step: int, interval: int = 1, log_interval: int = 10) -> None:
-    model_path = get_weight_ckpt_model_path(path, step)
-    wait_for_path(model_path, interval, log_interval)
 
 
 def print_benchmark(history: dict[str, list[Any]]) -> None:

@@ -5,6 +5,7 @@ from datetime import timedelta
 # Import environment before any other imports
 # ruff: noqa: I001
 
+from prime_rl.utils.act_offloading import maybe_activation_offloading
 import torch
 from torch.nn.functional import cross_entropy
 from torch.distributed.tensor.experimental import context_parallel
@@ -75,17 +76,19 @@ def train(config: SFTTrainerConfig):
     optimizer = setup_optimizer(config.optim, model, parallel_dims.world_mesh["dp_shard_cp"])
 
     # Set up the learning rate scheduler
-    scheduler = setup_scheduler(optimizer, config.scheduler, config.max_steps, config.optim.lr)
-    logger.info(f"Using `{config.scheduler.type}` scheduler ({config.scheduler})")
+    scheduler_steps = (
+        config.max_steps - config.ckpt.resume_step
+        if config.max_steps is not None
+        and (config.ckpt and config.ckpt.skip_scheduler and config.ckpt.resume_step is not None)
+        else config.max_steps
+    )
+    logger.info(f"Setting up {config.scheduler.type} scheduler with {scheduler_steps} steps ({config.scheduler})")
+    scheduler = setup_scheduler(optimizer, config.scheduler, scheduler_steps, config.optim.lr)
 
     # Set up weight checkpoint manager
     logger.info(f"Initializing weight checkpoint manager ({config.weights})")
     weight_ckpt_manager = setup_weight_ckpt_manager(
-        config.output_dir,
-        config.weights,
-        config.ckpt,
-        0,
-        config.model.experimental.lora
+        config.output_dir, config.weights, config.ckpt, 0, config.model.experimental.lora
     )
 
     # Set up checkpoint manager
@@ -98,16 +101,16 @@ def train(config: SFTTrainerConfig):
     # Set up the dataset and dataloader
     logger.info(f"Initializing data ({config.data})")
     dataset = setup_dataset(tokenizer, config.data, config.model.cp * config.model.tp)
-    dataloader = setup_dataloader(dataset, tokenizer, config.data)
+    dataloader = setup_dataloader(dataset, config.data)
     dataiter = iter(dataloader)
 
     # Check that the world size and batch configuration is compatible
-    num_micro_batches = config.data.batch_size // config.data.micro_batch_size
-    if world.world_size > num_micro_batches:
+    batch_size = config.data.batch_size
+    if world.world_size > batch_size:
         raise ValueError(
-            f"There must be at least one micro batch per rank, but only have {num_micro_batches} micro batches for {world.world_size} ranks."
+            f"There must be at least one micro batch per rank, but only have {batch_size} micro batches for {world.world_size} ranks."
         )
-    if num_micro_batches % world.world_size != 0:
+    if batch_size % world.world_size != 0:
         raise ValueError(
             f"The number of micro batches ({num_micro_batches}) must be divisible by the world size ({world.world_size})."
         )
@@ -116,9 +119,19 @@ def train(config: SFTTrainerConfig):
     progress = Progress()
     if ckpt_manager is not None and config.ckpt and config.ckpt.resume_step:
         logger.info(f"Resuming training from checkpoint step {config.ckpt.resume_step}")
-        ckpt_manager.load(model, [optimizer], scheduler, progress, step=config.ckpt.resume_step, dataloader=dataloader)
+        ckpt_manager.load(
+            model,
+            [optimizer],
+            scheduler if not config.ckpt.skip_scheduler else None,
+            progress if not config.ckpt.skip_progress else None,
+            step=config.ckpt.resume_step,
+            dataloader=dataloader if not config.ckpt.skip_dataloader else None,
+        )
+        # This redundant setup is necessary because loading the optimizer's state has side effects on the scheduler state dict
+        if config.ckpt.skip_scheduler:
+            scheduler = setup_scheduler(optimizer, config.scheduler, scheduler_steps, config.optim.lr)
     logger.info(
-        f"Starting from step {progress.step} (total_tokens={progress.total_tokens}, total_samples={progress.total_samples}, dataloader_state={dataloader.state_dict()['dataset_state']})"
+        f"Starting from step {progress.step} (total_tokens={progress.total_tokens}, total_samples={progress.total_samples}, dataset_state={dataloader.state_dict()['dataset_state']})"
     )
 
     logger.info(f"Starting training loop ({config.max_steps=})")
@@ -175,23 +188,19 @@ def train(config: SFTTrainerConfig):
 
         step_start_time = time.time()
         forward_backward_start_time = time.time()
-        epoch = 0
-        grad_accum_steps = (
-            config.data.batch_size
-            * config.model.cp
-            * config.model.tp
-            // (config.data.micro_batch_size * world.world_size)
-        )
+        grad_accum_steps = config.data.batch_size * config.model.cp * config.model.tp // world.world_size
 
         batch_loss = torch.tensor(0.0).to("cuda")
+        nan_loss_count = torch.tensor(0).to("cuda")
         batch_max_vio, max_vio = torch.tensor(0.0).to("cuda"), None
         for micro_step in range(grad_accum_steps):
+            model.set_requires_all_reduce(micro_step == grad_accum_steps - 1)
+
             micro_batch = next(dataiter)
             input_ids = micro_batch["input_ids"].to("cuda")
             position_ids = micro_batch["position_ids"].to("cuda")
             target_ids = micro_batch["target_ids"].to("cuda")
             loss_mask = micro_batch["loss_mask"].to("cuda")
-            epoch = micro_batch["epoch"]
             assert input_ids.shape == position_ids.shape == target_ids.shape == loss_mask.shape, (
                 f"input_ids.shape: {input_ids.shape}, position_ids.shape: {position_ids.shape}, target_ids.shape: {target_ids.shape}, loss_mask.shape: {loss_mask.shape}"
             )
@@ -211,7 +220,8 @@ def train(config: SFTTrainerConfig):
 
             with maybe_context_parallel:
                 # Forward pass
-                with maybe_record_function("forward"):
+                logger.debug("Starting forward pass")
+                with maybe_record_function("forward"), maybe_activation_offloading(config.model.ac_offloading):
                     logits = forward(model, input_ids, position_ids)
                 B, L, V = logits.shape
 
@@ -222,12 +232,21 @@ def train(config: SFTTrainerConfig):
                 loss = loss[loss_mask].mean()
 
                 # Accumulate average loss over gradient accumulation steps
-                batch_loss += loss.detach() / grad_accum_steps
+
+                current_loss = loss.detach() / grad_accum_steps
+
+                # only add if the loss is not nan
+                if not torch.isnan(current_loss):
+                    batch_loss += current_loss
+                else:
+                    nan_loss_count += 1
+                    logger.warning("Loss is nan, not taking into account in the batch loss calculation")
 
                 # Delete logits before backward pass to avoid memory spike
                 del logits
 
                 # Backward pass
+                logger.debug("Starting backward pass")
                 with maybe_record_function("backward"):
                     (loss / grad_accum_steps).backward()
 
@@ -264,16 +283,17 @@ def train(config: SFTTrainerConfig):
         # Synchronize the tensor metrics across all steps and ranks
         logger.debug("Synchronizing tensor metrics across all steps and ranks")
         dist.all_reduce(batch_loss, op=dist.ReduceOp.AVG)
+        dist.all_reduce(nan_loss_count, op=dist.ReduceOp.SUM)
 
         # Compute step metrics
         num_tokens = config.data.batch_size * config.data.seq_len
         progress.total_tokens += num_tokens
-        progress.total_samples = dataloader.state_dict()["dataset_state"]["dataset"]["step"]
+        progress.total_samples = dataset.step
         perf_counter = get_perf_counter(model, config.data.seq_len)
         perf_counter.count_tokens(num_tokens)
         throughput = perf_counter.get_tokens_per_second() or 0
         mfu = perf_counter.get_mfu() or 0
-        peak_memory = torch.cuda.max_memory_allocated() / 1024**3  # GiB
+        peak_memory = torch.cuda.max_memory_reserved() / 1024**3  # GiB
 
         # Log step metrics
         step_time = time.time() - step_start_time
@@ -283,12 +303,26 @@ def train(config: SFTTrainerConfig):
         logger.success(step_message)
 
         # Log progress metrics
+        total_samples = sum(dataset.num_samples.values())
+        total_tokens = sum(dataset.num_tokens.values())
         progress_metrics = {
-            "progress/epoch": epoch,
-            "progress/total_samples": progress.total_samples,
-            "progress/total_tokens": progress.total_tokens,
+            "progress/epoch": dataset.epoch,
+            "progress/num_samples": progress.total_samples,
+            "progress/num_tokens": progress.total_tokens,
             "step": progress.step,
         }
+        # At least two subsets/splits
+        if len(dataset.num_samples) > 1:
+            progress_metrics.update(
+                **{
+                    f"progress/{subset_or_split}/ratio_samples": num_samples / total_samples
+                    for subset_or_split, num_samples in dataset.num_samples.items()
+                },
+                **{
+                    f"progress/{subset_or_split}/ratio_tokens": num_tokens / total_tokens
+                    for subset_or_split, num_tokens in dataset.num_tokens.items()
+                },
+            )
         monitor.log(progress_metrics)
 
         # Log performance metrics
@@ -311,6 +345,7 @@ def train(config: SFTTrainerConfig):
 
         loss_log_metrics = {
             "loss/mean": batch_loss.item(),
+            "loss/nan_count": nan_loss_count.item(),
             "step": progress.step,
         }
         # Log tensor stats
@@ -349,6 +384,7 @@ def train(config: SFTTrainerConfig):
 
     # Write final weight checkpoint
     if weight_ckpt_manager is not None:
+        assert config.weights is not None
         logger.info("Writing final weight checkpoint")
         weight_ckpt_manager.save(model, tokenizer, step=progress.step)
 

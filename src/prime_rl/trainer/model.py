@@ -1,22 +1,37 @@
 import logging
+import time
+from pathlib import Path
+from typing import cast
 
 import torch
-import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 from beartype import beartype as typechecker
+from huggingface_hub import snapshot_download
 from jaxtyping import Float, Int, jaxtyped
 from liger_kernel.transformers import AutoLigerKernelForCausalLM
 from torch import Tensor
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
+from torch.distributed.checkpoint.hf_storage import HuggingFaceStorageReader
+from torch.distributed.checkpoint.state_dict_loader import load as dcp_load
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, PretrainedConfig
 from transformers.tokenization_utils import PreTrainedTokenizer
 
 from prime_rl.trainer.config import ActivationCheckpointConfig, CompileConfig, ModelConfig
 from prime_rl.trainer.lora import apply_lora_to_model
 from prime_rl.trainer.models import AutoModelForCausalLMPrimeRL
 from prime_rl.trainer.parallel_dims import ParallelDims
+from prime_rl.trainer.weights import (
+    convert_hf_to_tt_moe,
+    convert_tt_to_hf_moe,
+    has_hf_moe_layers,
+    has_tt_moe_layers,
+    load_state_dict,
+    save_state_dict,
+)
+from prime_rl.trainer.world import get_world
 from prime_rl.utils.logger import get_logger
+from prime_rl.utils.tensor_hashing import get_module_signature
 
 # Add filter to the standard logging module for transformers.modeling_utils to supress the
 # flash attention dtype warnings since FSDP is used to handle mixed precision.
@@ -55,17 +70,26 @@ def get_load_balance_stats(model: nn.Module, reset_stats: bool = True) -> dict[s
 def get_model(
     config: ModelConfig, device: torch.device = torch.device("cpu"), dtype: torch.dtype = torch.bfloat16
 ) -> nn.Module:
-    config_model = AutoConfig.from_pretrained(
-        config.name, attn_implementation=config.attn, trust_remote_code=config.trust_remote_code
+    logger = get_logger()
+    logger.info(
+        f"Loading model config (name={config.name}, attn={config.attn}, trust_remote_code={config.trust_remote_code})"
     )
-    config_model.use_cache = False
-    config_model.use_grouped_mm = config.moe_use_grouped_mm
+    model_config = cast(
+        PretrainedConfig,
+        AutoConfig.from_pretrained(
+            config.name, attn_implementation=config.attn, trust_remote_code=config.trust_remote_code
+        ),
+    )
+    model_config.use_cache = False
+    model_config.use_grouped_mm = config.moe_use_grouped_mm
+    logger.debug(f"Loaded model config ({model_config.to_dict()})")
 
     if config.debug.num_layers is not None:
-        get_logger().info(f"Setting num_layers to {config.debug.num_layers}")
-        num_hidden_layers = min(config.debug.num_layers, config_model.num_hidden_layers)
-        get_logger().info(f"removed {config_model.num_hidden_layers - num_hidden_layers} layers")
-        config_model.num_hidden_layers = num_hidden_layers
+        num_hidden_layers = min(config.debug.num_layers, model_config.num_hidden_layers)
+        logger.warning(
+            f"Setting the number of layers to {config.debug.num_layers} in the model config. This means {model_config.num_hidden_layers - num_hidden_layers} layers will not be loaded."
+        )
+        model_config.num_hidden_layers = num_hidden_layers
 
     with device:
         match config.impl:
@@ -76,16 +100,19 @@ def get_model(
             case "custom":
                 model_cls = AutoModelForCausalLMPrimeRL
 
+        load_model_start_time = time.time()
         if device == torch.device("meta"):
-            get_logger().info(f"model num_layers random init: {config_model.num_hidden_layers}")
-            model = model_cls.from_config(config_model, trust_remote_code=config.trust_remote_code, dtype=dtype)
+            logger.info(f"Loading model {config.name} using {model_cls.__name__} to meta device")
+            model = model_cls.from_config(model_config, trust_remote_code=config.trust_remote_code, dtype=dtype)
         else:
+            logger.info(f"Loading model {config.name} using {model_cls.__name__} to CPU")
             model = model_cls.from_pretrained(
                 pretrained_model_name_or_path=config.name,
-                config=config_model,
+                config=model_config,
                 trust_remote_code=config.trust_remote_code,
                 dtype=dtype,
             )
+        logger.debug(f"Loaded model {config.name} in {time.time() - load_model_start_time:.2f} seconds")
 
     assert model.lm_head.weight.dtype == dtype, (
         f"LM head dtype wasnt loaded correctly {model.lm_head.weight.dtype} != {dtype}"
@@ -101,11 +128,8 @@ def setup_tokenizer(config: ModelConfig) -> PreTrainedTokenizer:
 
 def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDims):
     mp_policy = MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=DTYPE_MAP[config.reduce_dtype])
-    # TODO: Support dp_replicate
-    if config.dp_replicate > 1:
-        hsdp_mesh = parallel_dims.world_mesh["dp_replicate", "dp_shard_cp"]
-    else:
-        hsdp_mesh = parallel_dims.world_mesh["dp_shard_cp"]
+    # Always use 2D mesh format for consistency (dp_replicate dimension always present)
+    hsdp_mesh = parallel_dims.world_mesh["dp_replicate", "dp_shard_cp"]
 
     for transformer_block in model.model.layers:
         fully_shard(
@@ -136,23 +160,70 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
 
 
 def load_dcp_from_hf(model: nn.Module, config: ModelConfig):
-    from huggingface_hub import snapshot_download
-    from torch.distributed.checkpoint import DefaultLoadPlanner, HuggingFaceStorageReader
-
     model.to_empty(device="cuda")
+    torch.distributed.barrier()
 
+    logger = get_logger()
     if config.debug.random_init:
-        get_logger().warning("Zero initialization model. skipping HF checkpoint loading.")
+        logger.warning("Randomly initializing model. Skipping loading weights from HF.")
         return
 
-    path_snapshot = snapshot_download(repo_id=config.name, repo_type="model")
-    dcp.load(
+    if not Path(config.name).exists():
+        snapshot_path = Path(snapshot_download(repo_id=config.name, repo_type="model"))
+    else:
+        logger.info(
+            f"Loading model weights from path {config.name}, skipping snapshot download. If this is not expected, please remove the directory {config.name} and run again"
+        )
+        snapshot_path = Path(config.name)
+
+    # Load the snapshot state
+    snapshot_state_dict = load_state_dict(snapshot_path)
+    model_state_dict = model.state_dict()
+
+    # Dynamically convert between different weight formats if needed
+    if has_hf_moe_layers(snapshot_state_dict) and has_tt_moe_layers(model_state_dict):
+        logger.warning(
+            "Found HF weight format in snapshot state dict and TT weight format in model state dict. Trying to auto-convert..."
+        )
+        snapshot_path = snapshot_path / "tt"
+        if snapshot_path.exists():
+            logger.debug(f"Conversion found at {snapshot_path}.")
+        else:
+            if get_world().is_master:
+                logger.debug(
+                    f"Converting snapshot state dict to TT format and saving to {snapshot_path} on master rank. This is a one-time operation."
+                )
+                convert_hf_to_tt_moe(snapshot_state_dict)
+                save_state_dict(snapshot_state_dict, snapshot_path)
+
+    elif has_tt_moe_layers(snapshot_state_dict) and has_hf_moe_layers(model_state_dict):
+        logger.warning(
+            "Found TT weight format in snapshot state dict and HF weight format in model state dict. Trying to auto-convert..."
+        )
+        snapshot_path = snapshot_path / "hf"
+        if snapshot_path.exists():
+            logger.debug(f"Conversion found at {snapshot_path}.")
+        else:
+            if get_world().is_master:
+                logger.debug(
+                    f"Converting snapshot state dict to HF format and saving to {snapshot_path} on master rank. This is a one-time operation."
+                )
+                convert_tt_to_hf_moe(snapshot_state_dict)
+                save_state_dict(snapshot_state_dict, snapshot_path)
+
+    # All ranks wait for master rank to finish conversion
+    torch.distributed.barrier()
+
+    logger.info(f"Loading weights using HF DCP from {snapshot_path}")
+    load_dcp_start_time = time.time()
+    dcp_load(
         model.state_dict(),
-        storage_reader=HuggingFaceStorageReader(path=path_snapshot),
+        storage_reader=HuggingFaceStorageReader(path=snapshot_path.as_posix()),
         # Note: This allow is needed by weight tying but could cause silent issues
-        planner=DefaultLoadPlanner(allow_partial_load=True),
+        # planner=DefaultLoadPlanner(allow_partial_load=True),
     )
     fix_model_post_empty(model)
+    logger.debug(f"Loaded weights using HF DCP in {time.time() - load_dcp_start_time:.2f} seconds")
 
 
 def can_load_dcp_from_hf(model: nn.Module):
@@ -215,12 +286,17 @@ def apply_compile(model: nn.Module, compile_config: CompileConfig):
 
 
 def setup_model(config: ModelConfig, parallel_dims: ParallelDims, mask_loading_config=None) -> nn.Module:
+    logger = get_logger()
+    # Get model from specified device
     model = get_model(
         config,
         device=torch.device("meta" if config.load_using_meta else "cpu"),
         dtype=DTYPE_MAP[config.optimization_dtype],
     )
+
+    # Reload the model to CPU if we cannot load from
     if config.load_using_meta and not can_load_dcp_from_hf(model):
+        logger.warning("Cannot load model from meta device. Loading model to CPU instead.")
         model = get_model(config, device=torch.device("cpu"), dtype=DTYPE_MAP[config.optimization_dtype])
 
     # Load masks if specified
@@ -269,12 +345,7 @@ def setup_model(config: ModelConfig, parallel_dims: ParallelDims, mask_loading_c
     if config.load_using_meta and can_load_dcp_from_hf(model):
         load_dcp_from_hf(model, config)
 
-    if config.log_signature:
-        from prime_rl.utils.tensor_hashing import get_module_signature
-
-        get_logger().info(f"model signature: {get_module_signature(model, compress=True)}")
-
-    get_logger().info(f"model num_layers: {len(model.model.layers)}")
+    logger.debug(f"Model signature: {get_module_signature(model, compress=True)}")
     return model
 
 

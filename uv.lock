@@ -678,25 +678,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3b/b2/8d76c41ad7974ee264754709c22963447f7f8134613fd9ce80984ed0dab7/flash_attn-2.8.3.tar.gz", hash = "sha256:1e71dd64a9e0280e0447b8a0c2541bad4bf6ac65bdeaa2f90e51a9e57de0370d", size = 8447812, upload-time = "2025-08-15T08:28:12.911Z" }
 
 [[package]]
-name = "flashinfer-python"
-version = "0.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "einops" },
-    { name = "ninja" },
-    { name = "numpy" },
-    { name = "nvidia-cudnn-frontend" },
-    { name = "packaging" },
-    { name = "pynvml" },
-    { name = "requests" },
-    { name = "tabulate" },
-    { name = "torch" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/71/dd3001b8be8174d90561764a5f3be4ca219517bde2841189ea6973a3873f/flashinfer_python-0.3.1.tar.gz", hash = "sha256:992017d193dfbbc62e67401a6d5416629bf90b640872d14b7863de45e9371446", size = 3817118, upload-time = "2025-09-05T06:21:45.229Z" }
-
-[[package]]
 name = "fonttools"
 version = "4.59.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1819,16 +1800,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nvidia-cudnn-frontend"
-version = "1.14.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/aa/bc74229979ab0d51ea320b19d2d9e19e8d1d6048b70e4b2740a5316db87e/nvidia_cudnn_frontend-1.14.1-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:22e0ce7782785e84fe2f42704176ecbf061d0e97178556f88cf7ec263a5c9c19", size = 1717690, upload-time = "2025-09-05T05:35:54.854Z" },
-    { url = "https://files.pythonhosted.org/packages/b7/b8/5f812452c653447b4c09fec3cf0c5192abab1ce18358fcfab16a70113cfa/nvidia_cudnn_frontend-1.14.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c19a41a1b06f9d087e18cb4f2ca25208ae9423967e7009aba5dd2c3912558b4a", size = 1828281, upload-time = "2025-09-05T04:47:39.148Z" },
-    { url = "https://files.pythonhosted.org/packages/5f/f5/42d9f042772c7380915e75241a38e3db742045fee18f5c9928d45d1cfb69/nvidia_cudnn_frontend-1.14.1-cp312-cp312-win_amd64.whl", hash = "sha256:870edc1284319882b9c0d637e7a5e79198f65d84f2c37e931fcc790a6f6c055b", size = 1269377, upload-time = "2025-09-05T05:38:23.191Z" },
-]
-
-[[package]]
 name = "nvidia-cufft-cu12"
 version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
@@ -1888,15 +1859,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nvidia-ml-py"
-version = "13.580.65"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8f/76/ff4a297c82b463ef17e7d0100d1bee5dbe6d1416721a9170e51ffcb8ecf3/nvidia_ml_py-13.580.65.tar.gz", hash = "sha256:7bf18b03c7d3658727011cf5f0c6c2155b36ce439e65359a0a4a906214f6a3c9", size = 47864, upload-time = "2025-08-05T16:11:49.71Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/96/88a5cb161c61cab2ee65b5aa61e612901fbcb1660024f0ccb26fcb02a17c/nvidia_ml_py-13.580.65-py3-none-any.whl", hash = "sha256:f0c65306ed999d2d4ff793918bfd17d1e30895d1c4606413ef95a0ea42460792", size = 48866, upload-time = "2025-08-05T16:11:48.387Z" },
-]
-
-[[package]]
 name = "nvidia-nccl-cu12"
 version = "2.27.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1922,7 +1884,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.107.1"
+version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1934,14 +1896,14 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/e0/a62daa7ff769df969cc1b782852cace79615039630b297005356f5fb46fb/openai-1.107.1.tar.gz", hash = "sha256:7c51b6b8adadfcf5cada08a613423575258b180af5ad4bc2954b36ebc0d3ad48", size = 563671, upload-time = "2025-09-10T15:04:40.288Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/90/8f26554d24d63ed4f94d33c24271559863223a67e624f4d2e65ba8e48dca/openai-2.3.0.tar.gz", hash = "sha256:8d213ee5aaf91737faea2d7fc1cd608657a5367a18966372a3756ceaabfbd812", size = 589616, upload-time = "2025-10-10T01:12:50.851Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/12/32c19999a58eec4a695e8ce334442b6135df949f0bb61b2ceaa4fa60d3a9/openai-1.107.1-py3-none-any.whl", hash = "sha256:168f9885b1b70d13ada0868a0d0adfd538c16a02f7fd9fe063851a2c9a025e72", size = 945177, upload-time = "2025-09-10T15:04:37.782Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/5b/4be258ff072ed8ee15f6bfd8d5a1a4618aa4704b127c0c5959212ad177d6/openai-2.3.0-py3-none-any.whl", hash = "sha256:a7aa83be6f7b0ab2e4d4d7bcaf36e3d790874c0167380c5d0afd0ed99a86bd7b", size = 999768, upload-time = "2025-10-10T01:12:48.647Z" },
 ]
 
 [[package]]
 name = "openai-agents"
-version = "0.2.11"
+version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "griffe" },
@@ -1952,9 +1914,9 @@ dependencies = [
     { name = "types-requests" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/c7/e8b588851bdbb33f16397b45d182998a01e6e57ff028a143788036a89d53/openai_agents-0.2.11.tar.gz", hash = "sha256:1a2e3fade02b3d8571560dbd121bfe0d84c80f48da04c838d9d5195966714abc", size = 1677542, upload-time = "2025-09-03T22:16:05.856Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/f8/a292d8f506997355755d88db619966539ec838ce18f070c5a101e5a430ec/openai_agents-0.1.0.tar.gz", hash = "sha256:a697a4fdd881a7a16db8c0dcafba0f17d9e90b6236a4b79923bd043b6ae86d80", size = 1379588, upload-time = "2025-06-27T20:58:03.186Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/71/a8712a89502b95da64db6b0b31c12ac5039542ae8e31caddba369b6bd324/openai_agents-0.2.11-py3-none-any.whl", hash = "sha256:ed26f7bb2b08bd7607ae87eb7bcfcee8c8f4431da134252757b31120a68b9086", size = 179141, upload-time = "2025-09-03T22:16:03.823Z" },
+    { url = "https://files.pythonhosted.org/packages/31/5b/326e6b1b661dbef718977a8379f9702a4eec1df772450517870beeb3af35/openai_agents-0.1.0-py3-none-any.whl", hash = "sha256:6a8ef71d3f20aecba0f01bca2e059590d1c23f5adc02d780cb5921ea8a7ca774", size = 130620, upload-time = "2025-06-27T20:58:01.461Z" },
 ]
 
 [[package]]
@@ -2168,6 +2130,18 @@ wheels = [
 ]
 
 [[package]]
+name = "prime-evals"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/1e/433bde0e8f8de1d9ed35d30f96422fba9e30efdee16db584eaa3ec0aa4e7/prime_evals-0.1.2-py3-none-any.whl", hash = "sha256:f6e164b19beea7b5b5f2bec6bbcb9c8e371477e9ea698f09d88e907f7f253be3", size = 12795, upload-time = "2025-10-28T10:55:42.102Z" },
+]
+
+[[package]]
 name = "prime-rl"
 version = "0.1.0"
 source = { editable = "." }
@@ -2178,7 +2152,7 @@ dependencies = [
     { name = "cydifflib" },
     { name = "datasets" },
     { name = "dion" },
-    { name = "hf-transfer" },
+    { name = "flash-attn" },
     { name = "jaxtyping" },
     { name = "liger-kernel" },
     { name = "loguru" },
@@ -2187,6 +2161,7 @@ dependencies = [
     { name = "nltk" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "prime-evals" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pylatexenc" },
@@ -2203,14 +2178,6 @@ dependencies = [
     { name = "verifiers" },
     { name = "vllm" },
     { name = "wandb" },
-]
-
-[package.optional-dependencies]
-flash-attn = [
-    { name = "flash-attn" },
-]
-flash-infer = [
-    { name = "flashinfer-python" },
 ]
 
 [package.dev-dependencies]
@@ -2230,9 +2197,7 @@ requires-dist = [
     { name = "cydifflib", specifier = ">=1.2.0" },
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "dion", git = "https://github.com/samsja/dion.git?rev=main" },
-    { name = "flash-attn", marker = "extra == 'flash-attn'", specifier = ">=2.8.3" },
-    { name = "flashinfer-python", marker = "extra == 'flash-infer'", specifier = ">=0.2.8rc1" },
-    { name = "hf-transfer" },
+    { name = "flash-attn", specifier = ">=2.8.3" },
     { name = "jaxtyping", specifier = ">=0.3.2" },
     { name = "liger-kernel", specifier = ">=0.5.10" },
     { name = "loguru", specifier = ">=0.7.3" },
@@ -2241,6 +2206,7 @@ requires-dist = [
     { name = "nltk", specifier = ">=3.9.1" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "openai", specifier = ">=1.106.1" },
+    { name = "prime-evals", specifier = ">=0.1.2" },
     { name = "pydantic", specifier = ">=1.10.13" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pylatexenc", specifier = ">=2.10" },
@@ -2255,11 +2221,10 @@ requires-dist = [
     { name = "torchtitan", git = "https://github.com/pytorch/torchtitan?rev=a1fdd7e43694bbfeff5d6ad8ac738c067bb90d41" },
     { name = "transformers", specifier = ">=4.56.0" },
     { name = "uvloop", specifier = ">=0.21.0" },
-    { name = "verifiers", specifier = ">=0.1.4" },
+    { name = "verifiers", git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=6429ed7" },
     { name = "vllm", specifier = "==0.10.2" },
     { name = "wandb", specifier = ">=0.20.1" },
 ]
-provides-extras = ["flash-attn", "flash-infer"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2268,6 +2233,19 @@ dev = [
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "ruff", specifier = ">=0.12.1" },
+]
+
+[[package]]
+name = "prime-sandboxes"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4d/bb/f7c8b0f3dd73651b456a6e2dbb6b7154c19aa7ed699b1faacd88dd82b9fa/prime_sandboxes-0.1.0.tar.gz", hash = "sha256:99d7c0a799aba8685a9583446886eb258a579be2b741066708a9afab6737212e", size = 34581, upload-time = "2025-10-09T01:06:50.71Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/6b/bfaa9d100a398c227e6af790452fd818f210a2f070e62391e7648da77009/prime_sandboxes-0.1.0-py3-none-any.whl", hash = "sha256:67a408d2bc4f96d73f8266f01582ab402d566b96ad941f031d4c37bf95753767", size = 14798, upload-time = "2025-10-09T01:06:49.403Z" },
 ]
 
 [[package]]
@@ -2557,18 +2535,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/97/6c/37cf2bfa76f122885acec21d62018fd9503ece009a05ea5d32dd348133e2/pylatexenc-3.0a33.tar.gz", hash = "sha256:087c9d6d280ba1242e01caf0a6436b18e9790e07148eb9430aeaa51b68d2c114", size = 205228, upload-time = "2025-08-26T09:09:26.385Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c6/43/0a8a0b4b42b9b38f01f255b777bd4697099eb75ea7201444b528794a2a4f/pylatexenc-3.0a33-py3-none-any.whl", hash = "sha256:71221905d8e731c0600cde10af08f16f539723b6ffe17f478e56f5c0208c507a", size = 267673, upload-time = "2025-08-26T09:09:24.832Z" },
-]
-
-[[package]]
-name = "pynvml"
-version = "13.0.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-ml-py" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5c/57/da7dc63a79f59e082e26a66ac02d87d69ea316b35b35b7a00d82f3ce3d2f/pynvml-13.0.1.tar.gz", hash = "sha256:1245991d9db786b4d2f277ce66869bd58f38ac654e38c9397d18f243c8f6e48f", size = 35226, upload-time = "2025-09-05T20:33:25.377Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/4a/cac76c174bb439a0c46c9a4413fcbea5c6cabfb01879f7bbdb9fdfaed76c/pynvml-13.0.1-py3-none-any.whl", hash = "sha256:e2b20e0a501eeec951e2455b7ab444759cf048e0e13a57b08049fa2775266aa8", size = 28810, upload-time = "2025-09-05T20:33:24.13Z" },
 ]
 
 [[package]]
@@ -3110,15 +3076,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tabulate"
-version = "0.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ec/fe/802052aecb21e3797b8f7902564ab6ea0d60ff8ca23952079064155d1ae1/tabulate-0.9.0.tar.gz", hash = "sha256:0095b12bf5966de529c0feb1fa08671671b3368eec77d7ef7ab114be2c068b3c", size = 81090, upload-time = "2022-10-06T17:21:48.54Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/40/44/4a5f08c96eb108af5cb50b41f76142f0afa346dfa99d5296fe7202a11854/tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f", size = 35252, upload-time = "2022-10-06T17:21:44.262Z" },
-]
-
-[[package]]
 name = "tensorboard"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3573,22 +3530,20 @@ wheels = [
 
 [[package]]
 name = "verifiers"
-version = "0.1.4"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.7"
+source = { git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=6429ed7#6429ed7fb742da0a152626b7b57d6d8f537bfff9" }
 dependencies = [
     { name = "datasets" },
     { name = "jinja2" },
     { name = "nest-asyncio" },
     { name = "openai" },
     { name = "openai-agents" },
+    { name = "prime-sandboxes" },
     { name = "pydantic" },
     { name = "requests" },
     { name = "rich" },
     { name = "textual" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/91/3e/5aa99c90f6f642ca270111003c63c82b7145e6888a145346d2317ee53e0c/verifiers-0.1.4.tar.gz", hash = "sha256:4e843368c34ffa154fc6343bd0d38a51e48962f278fbe97cce4e3532aabac88c", size = 112825, upload-time = "2025-09-22T06:39:56.664Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/6f/5ce86ea075ce1a8c46ca863c49942c667474512e6e5631bc13a7ce1e3969/verifiers-0.1.4-py3-none-any.whl", hash = "sha256:1d12e9ae93dbe28d8e97ae12980098404f3fa791a8d06ef13bee8fef6e04faae", size = 102773, upload-time = "2025-09-22T06:39:55.508Z" },
+    { name = "wget" },
 ]
 
 [[package]]
@@ -3774,6 +3729,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/9f/69/83029f1f6300c5fb2
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/24/ab44c871b0f07f491e5d2ad12c9bd7358e527510618cb1b803a88e986db1/werkzeug-3.1.3-py3-none-any.whl", hash = "sha256:54b78bf3716d19a65be4fceccc0d1d7b89e608834989dfae50ea87564639213e", size = 224498, upload-time = "2024-11-08T15:52:16.132Z" },
 ]
+
+[[package]]
+name = "wget"
+version = "3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/6a/62e288da7bcda82b935ff0c6cfe542970f04e29c756b0e147251b2fb251f/wget-3.2.zip", hash = "sha256:35e630eca2aa50ce998b9b1a127bb26b30dfee573702782aa982f875e3f16061", size = 10857, upload-time = "2015-10-22T15:26:37.51Z" }
 
 [[package]]
 name = "widgetsnbextension"

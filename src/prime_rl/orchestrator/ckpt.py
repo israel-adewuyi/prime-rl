@@ -34,6 +34,15 @@ class CheckpointManager:
     def get_ckpt_path(self, step: int) -> Path:
         return self.get_step_path(step) / "orchestrator"
 
+    def get_latest_step(self) -> int:
+        step_dirs = list(self.ckpt_dir.glob("step_*"))
+        if len(step_dirs) == 0:
+            raise ValueError(f"No checkpoints found in {self.ckpt_dir}")
+        steps = sorted([int(step_dir.name.split("_")[-1]) for step_dir in step_dirs])
+        latest_step = steps[-1]
+        self._logger.info(f"Found latest checkpoint in {self.ckpt_dir}: {latest_step}")
+        return latest_step
+
     def _save_to_path(
         self,
         ckpt_path: Path,
@@ -62,20 +71,29 @@ class CheckpointManager:
         start_time = time.time()
 
         # Load progress
-        with open(ckpt_path / "progress.pt", "rb") as f:
-            state = torch.load(f, weights_only=False)
+        if self.config.skip_progress:
+            self._logger.info("Skipping progress loading from checkpoint")
+        else:
+            with open(ckpt_path / "progress.pt", "rb") as f:
+                state = torch.load(f, weights_only=False)
 
-        # Set progress in-place
-        for key, value in asdict(state["progress"]).items():
-            setattr(progress, key, value)
+            # Set progress in-place
+            for key, value in asdict(state["progress"]).items():
+                setattr(progress, key, value)
 
         # Load buffer
-        buffer.load(ckpt_path / "buffer")
+        if self.config.skip_buffer:
+            self._logger.info("Skipping buffer loading from checkpoint")
+        else:
+            buffer.load(ckpt_path / "buffer")
 
         self._logger.debug(f"Orchestrator checkpoint loaded in {time.time() - start_time:.2f} seconds")
 
     def load(self, progress: Progress, buffer: Buffer, step: int) -> None:
         """Loads a checkpoint from a given path."""
+        if step == -1:
+            step = self.get_latest_step()
+
         ckpt_path = self.get_ckpt_path(step)
         if not ckpt_path.exists():
             raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}")

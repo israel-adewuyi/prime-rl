@@ -3,8 +3,8 @@ from typing import Annotated
 
 from pydantic import Field, model_validator
 
-from prime_rl.orchestrator.config import ClientConfig, EvalConfig
-from prime_rl.utils.config import LogConfig, ModelConfig, WandbMonitorConfig
+from prime_rl.orchestrator.config import EvalConfig
+from prime_rl.utils.config import ClientConfig, LogConfig, ModelConfig, WandbMonitorConfig
 from prime_rl.utils.pydantic_config import BaseSettings
 
 
@@ -57,6 +57,13 @@ class OfflineEvalConfig(EvalConfig, BaseSettings):
             description="Whether to use tqdm to display progress bars during model generation.",
         ),
     ] = False
+
+    max_concurrent: Annotated[
+        int | None,
+        Field(
+            description="Maximum number of concurrent rollouts to generate and score. Will create a global semaphore and pass to verifiers Environment. If None, will not limit concurrency.",
+        ),
+    ] = None
 
     @model_validator(mode="after")
     def validate_steps(self):
