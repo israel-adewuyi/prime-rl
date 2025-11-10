@@ -1,28 +1,16 @@
-max_steps = 101
+max_steps = 6
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
-
-[wandb]
-project = "alphabet-sort"
-group="generating_masks"
-name = "orch/run_1_beta=0.99"
-
-[wandb.log_extras]
-samples = true
-distributions = false
-interval = 2
+attn = "sdpa"
 
 [optim]
-lr = 1e-6
+lr = 5e-6
 
 [grad_acc]
 beta = 0.99
-epsilon = 1e-8
-mask_save_interval = 5
-tolerance = [1e-5, 1e-6, 1e-7]
-save_masks = true
+epsilon = 1e-12
+acc_upload_interval = 1
 upload_to_hf = true
-hf_upload_interval = 5
-hf_repo_id = "israel-adewuyi/Qwen2.5-0.5B-Instruct-grad_masks"
+hf_repo_id = "israel-adewuyi/Qwen2.5-0.5B-Instruct-accumulated_grad"
 hf_private = false

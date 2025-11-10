@@ -1,21 +1,11 @@
-max_steps = 101
-batch_size = 64
+max_steps = 6
+batch_size = 512
 seq_len = 2048
 rollouts_per_example = 16
 mask_truncated_completions = false
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
-
-[wandb]
-project = "alphabet-sort"
-group="generating_masks"
-name = "orch/run_1_beta=0.99"
-
-[wandb.log_extras]
-samples = true
-distributions = false
-interval = 2
 
 [[env]]
 id = "alphabet-sort"
