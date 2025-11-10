@@ -84,7 +84,7 @@ def train(config: RLTrainerConfig):
 
     # Set up the gradient accumulator (only if saving masks)
     grad_accumulator = None
-    if config.grad_acc is not None and config.grad_acc.save_masks:
+    if config.grad_acc is not None:
         logger.info("Initializing gradient accumulator for mask generation")
         grad_accumulator = GradientAccumulator(
             config.grad_acc,
