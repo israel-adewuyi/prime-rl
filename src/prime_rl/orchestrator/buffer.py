@@ -1,6 +1,5 @@
 import json
 import random
-import uuid
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -30,15 +29,16 @@ class Buffer(ABC):
         if self.config.seed is not None:
             random.seed(self.config.seed)
 
-        # Initialize buffer
+        # Initialize buffer from verifiers dataset
         self._init_buffer(dataset, self.config.from_scratch)
 
     def _init_buffer(self, dataset: Dataset, from_scratch: bool) -> None:
         """Initializes the buffer state from a dataset."""
-        # Store problem IDs
-        if "id" not in dataset.column_names:
-            dataset = dataset.add_column("id", list(range(len(dataset))), new_fingerprint=str(uuid.uuid4()))
-        self.problem_ids = dataset["id"]
+        # Use example_id column from verifiers
+        assert "example_id" in dataset.column_names, "The dataset must contain a `example_id` column."
+        assert isinstance(dataset["example_id"][0], int), "The `example_id` column must be of type int."
+        assert len(set(dataset["example_id"])) == len(dataset), "The `example_id` column must be unique."
+        self.problem_ids = dataset["example_id"]
 
         if from_scratch:
             self.logger.debug("Initializing metadata and rollouts in buffer from scratch.")
@@ -164,7 +164,6 @@ class SimpleBuffer(Buffer):
         )
         sampled_problem_ids = random.sample(self.problem_ids, n)
         assert len(sampled_problem_ids) == n
-        self.logger.debug(f"Sampled {n} problem(s) ({sampled_problem_ids=})")
 
         # Get problems from indices
         sampled_problems = [self.problem_buffer[problem_id] for problem_id in sampled_problem_ids]
@@ -231,7 +230,6 @@ class DifficultyPoolBuffer(Buffer):
         n_easy = int(n * self.config.easy_fraction)
         n_hard = int(n * self.config.hard_fraction)
         n_normal = n - n_easy - n_hard
-        self.logger.debug(f"Sampling {n_easy=}, {n_normal=}, {n_hard=}")
 
         # Get low and high priority problem
         easy_problem_ids = [
@@ -243,9 +241,6 @@ class DifficultyPoolBuffer(Buffer):
         hard_problem_ids = [
             problem_id for problem_id, metadata in self.metadata.items() if metadata["difficulty"] == "hard"
         ]
-        self.logger.debug(
-            f"Found {len(easy_problem_ids)} easy, {len(normal_problem_ids)} normal and {len(hard_problem_ids)} hard problems"
-        )
 
         # Sample easy problems
         # Cannot sample more than the number of low priority problems available
@@ -277,9 +272,6 @@ class DifficultyPoolBuffer(Buffer):
 
         sampled_problem_ids = sampled_easy_problem_ids + sampled_normal_problem_ids + sampled_hard_problem_ids
         assert len(sampled_problem_ids) == n
-        self.logger.debug(
-            f"Sampled {n} problem(s) (easy={len(sampled_easy_problem_ids)}, normal={len(sampled_normal_problem_ids)}, hard={len(sampled_hard_problem_ids)}, {sampled_problem_ids=})"
-        )
 
         # Sample problems
         sampled_problems = [self.problem_buffer[problem_id] for problem_id in sampled_problem_ids]
@@ -310,8 +302,6 @@ class DifficultyPoolBuffer(Buffer):
             old_difficulty = self.metadata[problem_id]["difficulty"]
             stats[(old_difficulty, new_difficulty)] += 1
             self.metadata[problem_id].update({"reward": reward, "difficulty": new_difficulty})
-        stats_str = ", ".join([f"{v} problem(s) moved from `{k[0]}` to `{k[1]}`" for k, v in stats.items()])
-        self.logger.debug(f"Updated difficulty information ({stats_str})")
 
     def sample_rollouts(self, n: int) -> list[Rollout]:
         # Take the first n rollouts from the rollout buffer
@@ -337,9 +327,7 @@ class OnlineDifficultyBuffer(Buffer):
     """
     The online difficulty buffer ensures that any sampled rollouts are within
     some configurable difficulty range. This means it may not return the
-    specified number of rollouts. It is the orchestrator's task to sample more.
-    An oversampling factor can be specified to increase the chance that at least
-    n problems are within the difficulty range.
+    specified number of rollouts.
     """
 
     def __init__(self, dataset: Dataset, buffer_config: OnlineDifficultyBufferConfig):
@@ -352,7 +340,6 @@ class OnlineDifficultyBuffer(Buffer):
             f"There should be at least {n} problem(s) in the buffer, but found only {len(self.problem_ids)}"
         )
         sampled_problem_ids = random.sample(self.problem_ids, n)
-        self.logger.debug(f"Sampled {n} problem(s) ({sampled_problem_ids=})")
 
         # Sample problems
         sampled_problems = [self.problem_buffer[problem_id] for problem_id in sampled_problem_ids]
@@ -401,9 +388,6 @@ class OnlineDifficultyBuffer(Buffer):
                 self.config.min_reward or -1e9 <= self.metadata[problem_id]["reward"] <= self.config.max_reward or 1e9
                 for problem_id in sampled_problem_ids
             ]
-        )
-        self.logger.debug(
-            f"Sampled {len(sampled_problem_ids)} problem(s) within difficulty range [{self.config.min_reward}, {self.config.max_reward}] ({sampled_problem_ids=})"
         )
 
         if len(sampled_problem_ids) < n:
