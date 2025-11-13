@@ -285,3 +285,9 @@ def get_latest_ckpt_step(weights_dir: Path) -> int | None:
         if Path(weights_dir / f"step_{latest_step}" / "STABLE").exists():
             return latest_step
     return None
+
+
+def mean_normalize(values: list[float] | list[int]) -> list[float]:
+    """Mean-Normalize a list of values to 0-1."""
+    sum_values = sum(values)
+    return [value / sum_values if sum_values > 0 else 0 for value in values]
