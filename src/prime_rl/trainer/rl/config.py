@@ -75,6 +75,9 @@ class MaskTrainConfig(BaseModel):
     beta: Annotated[float, Field(description="Beta term for the mask to be downloaded ")] = 0.99
     repo_id: Annotated[str, Field(description="Path to the HF repo from which to load the masks")] = "None"
     tolerance: Annotated[float, Field(description="The mask tolerance being downloaded")] = 1e-2
+    mask_format: Annotated[str, Field(description="If the mask to be used for training is new or old")] = "old"
+    batch: Annotated[int, Field(description="Batch size of the training used to generate mask")] = 1024
+    num_active: Annotated[int, Field(description="Number of active parameters in the grad mask")] = 247016
 
 
 class RLTrainerConfig(BaseSettings):
