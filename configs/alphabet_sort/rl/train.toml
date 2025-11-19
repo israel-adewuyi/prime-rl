@@ -1,16 +1,17 @@
 max_steps = 6
+memory_profiler_path = "mem"
 
 [model]
-name = "Qwen/Qwen2.5-0.5B-Instruct"
+name = "Qwen/Qwen2.5-Math-1.5B"
 attn = "sdpa"
 
 [optim]
-lr = 5e-6
+lr = 1e-6
 
 [grad_acc]
 beta = 0.99
 epsilon = 1e-12
 acc_upload_interval = 1
 upload_to_hf = true
-hf_repo_id = "israel-adewuyi/Qwen2.5-0.5B-Instruct-accumulated_grad"
+hf_repo_id = "israel-adewuyi/Qwen2.5-Math-1.5B-accumulated_grad"
 hf_private = false

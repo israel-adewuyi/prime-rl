@@ -1,15 +1,15 @@
 max_steps = 6
-batch_size = 512
-seq_len = 2048
+batch_size = 1024
+seq_len = 3584
 rollouts_per_example = 16
 mask_truncated_completions = false
 
 [model]
-name = "Qwen/Qwen2.5-0.5B-Instruct"
+name = "Qwen/Qwen2.5-Math-1.5B"
 
 [[env]]
-id = "alphabet-sort"
-args = { min_turns = 2, max_turns = 2 }
+id = "intellect-math"
+args = { solve_rate_field = "solve_rate_qwen_r1_distill_7b", min_solve_rate = 0.4, max_solve_rate = 0.9 }
 
 [sampling]
-max_tokens = 512
+max_tokens = 3584
