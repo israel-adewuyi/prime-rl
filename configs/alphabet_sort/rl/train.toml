@@ -3,7 +3,6 @@ memory_profiler_path = "mem"
 
 [model]
 name = "Qwen/Qwen2.5-Math-1.5B"
-attn = "sdpa"
 
 [optim]
 lr = 1e-6
