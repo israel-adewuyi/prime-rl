@@ -10,12 +10,17 @@ from safetensors.torch import save_file
 from torch import Tensor, nn
 from torch.distributed.checkpoint.state_dict import _get_fqns as get_fqns
 from torch.distributed.tensor import DTensor
-from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME, WEIGHTS_INDEX_NAME, WEIGHTS_NAME
+from transformers.utils import (
+    ADAPTER_SAFE_WEIGHTS_NAME,
+    ADAPTER_WEIGHTS_NAME,
+    SAFE_WEIGHTS_INDEX_NAME,
+    SAFE_WEIGHTS_NAME,
+    WEIGHTS_INDEX_NAME,
+    WEIGHTS_NAME,
+)
 
 from prime_rl.trainer.lora import (
     clean_lora_state_dict,
-    merge_lora_weights_inplace,
-    restore_lora_weights_inplace,
 )
 from prime_rl.utils.logger import get_logger
 
@@ -177,10 +182,14 @@ def save_state_dict(
     save_dir: Path,
     save_format: Literal["torch", "safetensors"] = "safetensors",
     save_sharded: bool = True,
+    adapter: bool = False,
 ):
     """Save a state dict to a local directory in safetensors or torch format."""
     logger = get_logger()
-    weights_name = SAFE_WEIGHTS_NAME if save_format == "safetensors" else WEIGHTS_NAME
+    if adapter:
+        weights_name = ADAPTER_SAFE_WEIGHTS_NAME if save_format == "safetensors" else ADAPTER_WEIGHTS_NAME
+    else:
+        weights_name = SAFE_WEIGHTS_NAME if save_format == "safetensors" else WEIGHTS_NAME
     save_dir.mkdir(parents=True, exist_ok=True)
     if save_sharded:
         filename_pattern = weights_name.replace(".bin", "{suffix}.bin").replace(".safetensors", "{suffix}.safetensors")
@@ -229,35 +238,26 @@ def save_state_dict(
 
 
 def gather_weights_on_master(
-    model: nn.Module, is_master: bool, dtype: torch.dtype = torch.bfloat16, has_lora_layers: bool = False
+    model: nn.Module, is_master: bool, dtype: torch.dtype = torch.bfloat16
 ) -> dict[str, Tensor]:
-    """Gather distributed weights on CPU on master rank. Optionally, merge LoRA weights."""
-    original_lora_state = None
-    if has_lora_layers:
-        original_lora_state = merge_lora_weights_inplace(model)
+    """Gather distributed weights on CPU on master rank."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, module="torch.distributed")
+        warnings.filterwarnings("ignore", category=UserWarning, module="torch.distributed.*")
 
-    try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning, module="torch.distributed")
-            warnings.filterwarnings("ignore", category=UserWarning, module="torch.distributed.*")
+        cpu_state = {}
+        for key, value in model.state_dict().items():
+            if isinstance(value, DTensor):
+                # only gather after the downcast to dtype as it will be faster
+                value = cast(DTensor, value.to(dtype)).full_tensor()
 
-            cpu_state = {}
-            for key, value in model.state_dict().items():
-                if isinstance(value, DTensor):
-                    # only gather after the downcast to dtype as it will be faster
-                    value = cast(DTensor, value.to(dtype)).full_tensor()
-
-                if is_master:
-                    key = get_fqns(model, key)
-                    assert len(key) == 1
-                    key = next(iter(key))
-                    # TODO(Sami) Blocking to avoid race condition, should make non-blocking long-term tho
-                    cpu_state[key] = value.to("cpu", non_blocking=False)
-            torch.distributed.barrier()
-    finally:
-        # Always restore original LoRA state, even if gathering fails
-        if original_lora_state is not None:
-            restore_lora_weights_inplace(model, original_lora_state)
+            if is_master:
+                key = get_fqns(model, key)
+                assert len(key) == 1
+                key = next(iter(key))
+                # TODO(Sami) Blocking to avoid race condition, should make non-blocking long-term tho
+                cpu_state[key] = value.to("cpu", non_blocking=False)
+        torch.distributed.barrier()
 
     # Always clean up the state dict for HF compatibility
     if any(".base_layer." in key or "lora_A" in key or "lora_B" in key for key in cpu_state.keys()):
