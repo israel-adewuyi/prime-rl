@@ -18,7 +18,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, Pretra
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.utils.import_utils import is_flash_attn_3_available
 
-from prime_rl.trainer.config import ActivationCheckpointConfig, CompileConfig, ModelConfig
+from prime_rl.trainer.config import ActivationCheckpointConfig, CompileConfig, ModelConfig, TokenizerConfig
 from prime_rl.trainer.lora import apply_lora_to_model
 from prime_rl.trainer.models import AutoModelForCausalLMPrimeRL
 from prime_rl.trainer.parallel_dims import ParallelDims
@@ -121,9 +121,12 @@ def get_model(
     return model
 
 
-def setup_tokenizer(config: ModelConfig) -> PreTrainedTokenizer:
+def setup_tokenizer(config: TokenizerConfig) -> PreTrainedTokenizer:
     tokenizer = AutoTokenizer.from_pretrained(config.name, trust_remote_code=config.trust_remote_code)
+    if config.chat_template is not None:
+        tokenizer.chat_template = config.chat_template
     tokenizer.pad_token_id = tokenizer.eos_token_id
+
     return tokenizer
 
 
