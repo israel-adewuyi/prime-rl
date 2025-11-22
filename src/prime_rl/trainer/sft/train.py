@@ -2,12 +2,13 @@ import time
 from contextlib import nullcontext
 from datetime import timedelta
 
+from torch.nn import CrossEntropyLoss
+
 # Import environment before any other imports
 # ruff: noqa: I001
 
 from prime_rl.utils.act_offloading import maybe_activation_offloading
 import torch
-from torch.nn.functional import cross_entropy
 from torch.distributed.tensor.experimental import context_parallel
 from torch.profiler import profile, ProfilerActivity, record_function
 from loguru import logger
@@ -37,6 +38,7 @@ from prime_rl.utils.monitor import setup_monitor
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.utils.utils import clean_exit, to_col_format
 import torch.distributed as dist
+from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
 
 
 @clean_exit
@@ -130,6 +132,14 @@ def train(config: SFTTrainerConfig):
         f"Starting from step {progress.step} (total_tokens={progress.total_tokens}, total_samples={progress.total_samples}, dataset_state={dataloader.state_dict()['dataset_state']})"
     )
 
+    match config.loss_impl:
+        case "liger":
+            ce_loss = LigerCrossEntropyLoss(reduction="none")
+        case "torch":
+            ce_loss = CrossEntropyLoss(reduction="none")
+        case _:
+            raise ValueError(f"Invalid loss implementation: {config.loss_impl}")
+
     logger.info(f"Starting training loop (max_steps={config.max_steps or 'infinite'})")
     max_memory = torch.cuda.mem_get_info()[1] / 1024**3  # GiB
     is_first_step = True
@@ -220,7 +230,7 @@ def train(config: SFTTrainerConfig):
                 B, L, V = logits.shape
 
                 # Compute loss
-                loss = cross_entropy(logits.view(-1, V), target_ids.view(-1), reduction="none").view(B, L)
+                loss = ce_loss(logits.view(-1, V), target_ids.view(-1)).view(B, L)
 
                 # Compute average loss over unmasked tokens
                 loss = loss[loss_mask].mean()
