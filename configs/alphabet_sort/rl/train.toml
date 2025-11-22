@@ -1,18 +1,19 @@
-max_steps = 300
+max_steps = 101
 
 [model]
-name = "Qwen/Qwen2.5-0.5B-Instruct"
-attn = "sdpa" 
+name = "Qwen/Qwen2.5-Math-1.5B" 
 
 [optim]
 lr = 1e-4
 
 [wandb]
-project = "alphabetsort"
-name = "train_hyperparamsweep_beta-0.99_tol-1e-7_step-5_batch-128_lr-1e-4"
+project = "slimpeft"
+name = "train_math_qwen1.5B_hyperparamsweep_beta-0.99_step-5_batch-1024_lr-1e-4_sparsity-99.95"
 
 [load_mask]
-repo_id = "israel-adewuyi/Qwen2.5-0.5B-Instruct-grad_masks"
+repo_id = "israel-adewuyi/Qwen2.5-Math-1.5B-Intellect_math-grad_mask"
 beta = 0.99
 step = 5
-tolerance = 1e-07
+mask_format = "new"
+batch = 1024
+num_active = 771857

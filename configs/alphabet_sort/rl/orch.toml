@@ -1,19 +1,37 @@
-max_steps = 300
-batch_size = 128
-seq_len = 2048
+max_steps = 101
+batch_size = 1024
+seq_len = 3584
 rollouts_per_example = 16
 mask_truncated_completions = false
 
 [model]
-name = "Qwen/Qwen2.5-0.5B-Instruct"
+name = "Qwen/Qwen2.5-Math-1.5B"
 
 [wandb]
-project = "alphabetsort"
-name = "orch_hyperparamsweep_beta-0.99_tol-1e-7_step-5_batch-128_lr-1e-4"
+project = "slimpeft"
+name = "orch_math_qwen1.5B_full_1e6"
 
 [[env]]
-id = "alphabet-sort"
-args = { min_turns = 2, max_turns = 2 }
+id = "intellect-math"
+args = { solve_rate_field = "solve_rate_qwen_r1_distill_7b", min_solve_rate = 0.4, max_solve_rate = 0.9 }
 
 [sampling]
-max_tokens = 512
+max_tokens = 3584
+
+[wandb.log_extras]
+interval = 50
+
+[eval]
+interval = 10
+
+[[eval.env]]
+id = "math500"
+rollouts_per_example = 1
+
+[[eval.env]]
+id = "aime2024"
+rollouts_per_example = 4
+
+[eval.sampling]
+max_tokens = 3584
+temperature = 0.8

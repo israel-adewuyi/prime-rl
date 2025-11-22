@@ -41,6 +41,7 @@ dependencies = [
     "hf-transfer>=0.1.9",
     "tensorboard>=2.20.0",
     "tensorboardx>=2.6.4",
+    "prime-sandboxes>=0.2.3",
 ]
 
 [project.scripts]
