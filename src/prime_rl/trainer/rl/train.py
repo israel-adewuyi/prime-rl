@@ -42,7 +42,7 @@ from prime_rl.trainer.utils import (
 )
 from prime_rl.trainer.world import get_world
 from prime_rl.trainer.utils import load_masks_from_hf, mask_gradients_in_optimizer
-from prime_rl.utils.monitor import setup_monitor_tensorboard
+from prime_rl.utils.monitor import setup_monitor
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.utils.utils import clean_exit, to_col_format
 
@@ -64,7 +64,7 @@ def train(config: RLTrainerConfig):
 
     # Setup the monitor
     logger.info(f"Initializing monitor ({config.wandb})")
-    monitor = setup_monitor_tensorboard(config.wandb, output_dir=config.output_dir, run_config=config)
+    monitor = setup_monitor(config.wandb, output_dir=config.output_dir, run_config=config)
 
     # Set precision
     setup_torch_distributed(timeout=timedelta(seconds=config.dist_timeout_seconds))
