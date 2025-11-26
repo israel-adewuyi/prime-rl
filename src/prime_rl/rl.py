@@ -29,16 +29,14 @@ from prime_rl.utils.config import WandbMonitorConfig
 from prime_rl.utils.logger import setup_logger
 from prime_rl.utils.pydantic_config import BaseSettings, get_temp_toml_file, parse_argv
 from prime_rl.utils.utils import (
-    get_ckpt_dir,
-    get_cuda_visible_devices,
+    get_broadcast_dir,
     get_free_port,
     get_log_dir,
     get_rollout_dir,
-    get_weights_dir,
 )
 from prime_rl.utils.validation import (
-    validate_shared_async_level,
     validate_shared_ckpt_config,
+    validate_shared_max_async_level,
     validate_shared_max_steps,
     validate_shared_model_name,
     validate_shared_output_dir,
@@ -175,7 +173,7 @@ class RLConfig(BaseSettings):
         ),
     ] = None
 
-    async_level: Annotated[
+    max_async_level: Annotated[
         int | None,
         Field(
             description="The async level to use. If None, will fallback to the async level specified on submodule configs."
@@ -192,20 +190,7 @@ class RLConfig(BaseSettings):
     weight_broadcast: Annotated[WeightBroadcastConfig | None, Field(description="The weight broadcast config.")] = None
 
     @model_validator(mode="after")
-    def validate_device(self):
-        available_gpu_ids = get_cuda_visible_devices()
-        # If no CUDA devices are available (e.g., in CPU-only test environments), skip GPU validation
-        if len(available_gpu_ids) == 0:
-            return self
-        requested_gpu_ids = sorted(set(self.trainer_gpu_ids + self.inference_gpu_ids))
-        if len(requested_gpu_ids) > len(available_gpu_ids):
-            raise ValueError(
-                f"The number of requested GPUs ({len(requested_gpu_ids)}) exceeds available GPUs ({len(available_gpu_ids)})"
-            )
-        if any(not (gpu_id in available_gpu_ids) for gpu_id in requested_gpu_ids):
-            raise ValueError(
-                f"Some requested GPU IDs are not available. Available GPUs: {available_gpu_ids}, Requested GPUs: {requested_gpu_ids}"
-            )
+    def auto_setup_dp(self):
         if self.inference and len(self.inference_gpu_ids) != self.inference.parallel.dp * self.inference.parallel.tp:
             assert len(self.inference_gpu_ids) % self.inference.parallel.tp == 0, (
                 "Number of inference GPUs must be divisible by the tensor parallel size"
@@ -222,11 +207,11 @@ class RLConfig(BaseSettings):
     @model_validator(mode="after")
     def auto_setup_logs(self):
         # Copy log level
-        if self.log:
-            if self.log.level:
+        if self.log is not None:
+            if self.log.level is not None:
                 self.trainer.log.level = self.log.level
                 self.orchestrator.log.level = self.log.level
-            if self.log.file:
+            if self.log.file is not None:
                 self.trainer.log.file = self.log.file
                 self.orchestrator.log.file = self.log.file
 
@@ -237,25 +222,25 @@ class RLConfig(BaseSettings):
     @model_validator(mode="after")
     def auto_setup_ckpt(self):
         # If specified, automatically setup checkpoint configs for trainer and orchestrator
-        if self.ckpt:
+        if self.ckpt is not None:
             # Create checkpoint configs if not specified
-            if not self.trainer.ckpt:
+            if self.trainer.ckpt is None:
                 self.trainer.ckpt = TrainerCheckpointConfig()
-            if not self.orchestrator.ckpt:
+            if self.orchestrator.ckpt is None:
                 self.orchestrator.ckpt = OrchestratorCheckpointConfig()
 
             # If specified, use the same ckpt interval
-            if self.ckpt.interval:
+            if self.ckpt.interval is not None:
                 self.trainer.ckpt.interval = self.ckpt.interval
                 self.orchestrator.ckpt.interval = self.ckpt.interval
 
             # If resuming training, ensure orchestrator resume from the same step
-            if self.ckpt.resume_step:
+            if self.ckpt.resume_step is not None:
                 self.trainer.ckpt.resume_step = self.ckpt.resume_step
                 self.orchestrator.ckpt.resume_step = self.ckpt.resume_step
 
             # If specified, propagate keep policy
-            if self.ckpt.keep:
+            if self.ckpt.keep is not None:
                 self.trainer.ckpt.keep = self.ckpt.keep
                 self.orchestrator.ckpt.keep = self.ckpt.keep
 
@@ -266,7 +251,7 @@ class RLConfig(BaseSettings):
     @model_validator(mode="after")
     def auto_setup_wandb(self):
         # If specified, automatically use shared W&B project for orchestrator and trainer
-        if self.wandb:
+        if self.wandb is not None:
             if not self.trainer.wandb:
                 self.trainer.wandb = WandbMonitorConfig()
             if not self.orchestrator.wandb:
@@ -313,10 +298,10 @@ class RLConfig(BaseSettings):
     @model_validator(mode="after")
     def auto_setup_model(self):
         # Use the same model for trainer, orchestrator and inference
-        if self.model is not None and self.model.name:
+        if self.model is not None:
             self.trainer.model.name = self.model.name
             self.orchestrator.model.name = self.model.name
-            if self.inference:
+            if self.inference is not None:
                 self.inference.model.name = self.model.name
 
         validate_shared_model_name(self.trainer, self.orchestrator, self.inference)
@@ -326,7 +311,7 @@ class RLConfig(BaseSettings):
     @model_validator(mode="after")
     def auto_setup_max_steps(self):
         # If specified, use the same max steps for trainer and orchestrator
-        if self.max_steps:
+        if self.max_steps is not None:
             self.trainer.max_steps = self.max_steps
             self.orchestrator.max_steps = self.max_steps
 
@@ -337,18 +322,18 @@ class RLConfig(BaseSettings):
     @model_validator(mode="after")
     def auto_setup_async_level(self):
         # If specified, use the same async level for trainer and orchestrator
-        if self.async_level:
-            self.trainer.async_level = self.async_level
-            self.orchestrator.async_level = self.async_level
+        if self.max_async_level is not None:
+            self.trainer.max_async_level = self.max_async_level
+            self.orchestrator.max_async_level = self.max_async_level
 
-        validate_shared_async_level(self.trainer, self.orchestrator)
+        validate_shared_max_async_level(self.trainer, self.orchestrator)
 
         return self
 
     @model_validator(mode="after")
     def auto_setup_output_dir(self):
         # If specified, use the same outputs directory for trainer and orchestrator
-        if self.output_dir:
+        if self.output_dir is not None:
             self.trainer.output_dir = self.output_dir
             self.orchestrator.output_dir = self.output_dir
 
@@ -358,7 +343,7 @@ class RLConfig(BaseSettings):
 
     @model_validator(mode="after")
     def auto_setup_weight_broadcast(self):
-        if self.weight_broadcast:
+        if self.weight_broadcast is not None:
             if self.weight_broadcast.type == "nccl":
                 inference_world_size = self.inference.parallel.dp * self.inference.parallel.tp if self.inference else 1
                 self.trainer.weight_broadcast = TrainerNCCLWeightBroadcastConfig(
@@ -370,7 +355,7 @@ class RLConfig(BaseSettings):
             elif self.weight_broadcast.type == "filesystem":
                 self.trainer.weight_broadcast = TrainerFileSystemWeightBroadcastConfig()
                 self.orchestrator.weight_broadcast = OrchestratorFileSystemWeightBroadcastConfig()
-            if self.inference:
+            if self.inference is not None:
                 self.inference.weight_broadcast = InferenceWeightBroadcastConfig(type=self.weight_broadcast.type)
 
         validate_shared_weight_broadcast(self.trainer, self.orchestrator, self.inference)
@@ -379,12 +364,12 @@ class RLConfig(BaseSettings):
 
     @model_validator(mode="after")
     def warn_wandb_resume_id_missing(self):
-        if self.trainer.ckpt and self.trainer.ckpt.resume_step:
+        if self.trainer.ckpt is not None and self.trainer.ckpt.resume_step is not None:
             if self.trainer.wandb and not self.trainer.wandb.id:
                 warnings.warn(
                     "W&B run ID is not set for trainer even though resuming training. The current run will be created as a new run."
                 )
-        if self.orchestrator.ckpt and self.orchestrator.ckpt.resume_step:
+        if self.orchestrator.ckpt is not None and self.orchestrator.ckpt.resume_step is not None:
             if self.orchestrator.wandb and not self.orchestrator.wandb.id:
                 warnings.warn(
                     "W&B run ID is not set for orchestrator even though resuming training. The current run will be created as a new run."
@@ -467,29 +452,29 @@ def rl(config: RLConfig):
 
     # Prepare paths to communicate with the trainer
     log_dir = get_log_dir(config.output_dir)
-    ckpt_dir = get_ckpt_dir(config.output_dir)
-    weights_dir = get_weights_dir(config.output_dir)
     rollout_dir = get_rollout_dir(config.output_dir)
+    broadcast_dir = get_broadcast_dir(config.output_dir)
 
     # Clean up directories if specified
     if config.clean:
-        logger.info("Cleaning checkpoint, logs, weights and rollout directories")
+        logger.info("Cleaning checkpoint, logs, weights, broadcast and rollout directories")
 
-        # Cleaning logs
+        # Cleaning logs (so that streaming logs to terminal works)
         logger.info(f"Cleaning log dir ({log_dir})")
         shutil.rmtree(log_dir, ignore_errors=True)
         log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Cleaning checkpoints and weights, unless resuming
-        do_resume = config.trainer.ckpt and config.trainer.ckpt.resume_step
-        if not do_resume:  # Only clean if we don't resume
-            logger.info(f"Cleaning checkpoint directory ({ckpt_dir})")
-            shutil.rmtree(ckpt_dir, ignore_errors=True)
+        # Cleaning broadcast dir (so that orchestrator does not pre-maturely update weights)
+        if not (
+            config.ckpt
+            and config.ckpt.resume_step
+            and config.trainer.weight_broadcast
+            and config.trainer.weight_broadcast.type == "filesystem"
+        ):
+            logger.info(f"Cleaning broadcast directory ({broadcast_dir})")
+            shutil.rmtree(broadcast_dir, ignore_errors=True)
 
-            logger.info(f"Cleaning checkpoint weights directory ({weights_dir})")
-            shutil.rmtree(weights_dir, ignore_errors=True)
-
-        # Cleaning rollouts
+        # Cleaning rollouts (so that trainer does not train on old rollouts)
         logger.info(f"Cleaning rollout dir ({rollout_dir})")
         shutil.rmtree(rollout_dir, ignore_errors=True)
 

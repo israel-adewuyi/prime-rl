@@ -170,7 +170,7 @@ class EvalSaveConfig(BaseConfig):
     ] = False
 
 
-class EnvConfig(BaseModel):
+class EnvConfig(BaseConfig):
     """Configures an environment for training."""
 
     id: Annotated[str, Field(description="ID of the environment to use.")] = "reverse-text"
@@ -279,16 +279,16 @@ class CheckpointConfig(BaseConfig):
         ),
     ] = False
 
-
-class BufferConfig(BaseModel):
-    """Base config for all buffer types."""
-
-    from_scratch: Annotated[
-        bool,
+    buffer_path: Annotated[
+        Path | None,
         Field(
-            description="Whether to initialize the metadata and rollout buffer from scratch. Defaults to True, which means we will initialize empty metadata and rollout buffers. If False, we expect columns `metadata` and `rollouts` to be present in the environment dataset to initialize the buffer from.",
+            description="The path to load buffer state (metadata and rollouts) from. If None, will start with an empty buffer. The buffer state is saved at <ckpt_dir>/step_<step>/orchestrator/buffer.",
         ),
-    ] = True
+    ] = None
+
+
+class BufferConfig(BaseConfig):
+    """Configures the buffer for the orchestrator."""
 
     seed: Annotated[
         int | None,
@@ -297,33 +297,6 @@ class BufferConfig(BaseModel):
         ),
     ] = None
 
-
-class SimpleBufferConfig(BufferConfig):
-    type: Literal["simple"] = "simple"
-
-
-class DifficultyPoolBufferConfig(BufferConfig):
-    type: Literal["difficulty-pool"] = "difficulty-pool"
-
-    easy_border: Annotated[
-        float,
-        Field(
-            ge=0,
-            le=1,
-            description="If a problem has more than `easy_border` average reward across rollouts, it will be moved to the easy pool.",
-        ),
-    ] = 0.8
-
-    hard_border: Annotated[
-        float,
-        Field(
-            ge=0,
-            le=1,
-            description="If a problem has less than `hard_border` average reward across rollouts, it will be moved to the hard pool.",
-        ),
-    ] = 0.2
-
-    # TODO: Maybe make this float | int to allow for specific numbers of easy/hard samples?
     easy_fraction: Annotated[
         float,
         Field(
@@ -331,7 +304,7 @@ class DifficultyPoolBufferConfig(BufferConfig):
             le=1,
             description="Fraction of the batch that should consist of easy samples.",
         ),
-    ] = 0.1
+    ] = 0.0
 
     hard_fraction: Annotated[
         float,
@@ -340,47 +313,32 @@ class DifficultyPoolBufferConfig(BufferConfig):
             le=1,
             description="Fraction of the batch that should consist of hard samples.",
         ),
-    ] = 0.1
+    ] = 0.0
 
-
-class OnlineDifficultyBufferConfig(BufferConfig):
-    type: Literal["online-difficulty"] = "online-difficulty"
-
-    min_reward: Annotated[
+    easy_threshold: Annotated[
         float | None,
         Field(
-            ge=0,
-            le=1,
-            description="Minimum reward to include the sample in a batch.",
+            description="Threshold for easy difficulty classification. If average reward >= this threshold, mark as easy.",
         ),
-    ] = 0.01
+    ] = None
 
-    max_reward: Annotated[
+    hard_threshold: Annotated[
         float | None,
         Field(
-            ge=0,
-            le=1,
-            description="Maximum reward to include the sample in a batch.",
+            description="Threshold for hard difficulty classification. If average reward <= this threshold, mark as hard.",
         ),
-    ] = 0.99
+    ] = None
 
-    oversampling_factor: Annotated[
-        float,
+    online_difficulty_filtering: Annotated[
+        bool,
         Field(
-            gt=0,
-            description="Factor by which to oversample during filtering to ensure sufficient samples.",
+            description="Whether to filter rollouts based on their average reward. If True, rollouts with average reward == 0.0 will be marked as hard and rollouts with average reward == 1.0 will be marked as easy.",
         ),
-    ] = 1.0
-
-
-DataBufferConfigType: TypeAlias = SimpleBufferConfig | DifficultyPoolBufferConfig | OnlineDifficultyBufferConfig
+    ] = False
 
 
 class AdvantageConfig(BaseConfig):
-    std_norm: Literal["local", "global"] | None = None
     length_weighted_mean: bool = False
-    leave_one_out: bool = False
-    neg_clipped: bool = False
 
 
 class FileSystemWeightBroadcastConfig(BaseModel):
@@ -436,7 +394,7 @@ class OrchestratorConfig(BaseSettings):
     eval: OnlineEvalConfig | None = None
 
     # Data buffer configuration
-    buffer: Annotated[DataBufferConfigType, Field(discriminator="type")] = SimpleBufferConfig()
+    buffer: BufferConfig = BufferConfig()
 
     # The advantage configuration
     advantage: AdvantageConfig | None = AdvantageConfig()
@@ -472,6 +430,14 @@ class OrchestratorConfig(BaseSettings):
     ] = None
 
     batch_size: Annotated[int, Field(ge=1, description="Number of samples to train on per step.")] = 128
+
+    oversampling_factor: Annotated[
+        float,
+        Field(
+            ge=1,
+            description="Factor by which to oversample the batch. Will lead to more in-flight group rollout requests at the same time.",
+        ),
+    ] = 1.0
 
     rollouts_per_example: Annotated[
         int,
@@ -522,13 +488,28 @@ class OrchestratorConfig(BaseSettings):
         ),
     ] = None
 
-    async_level: Annotated[
+    max_off_policy_steps: Annotated[
         int,
         Field(
             ge=0,
-            description="Maximum number of async levels to use. If 0, will do synchronous RL. Else, it will allow to go `async_level` steps ahead of training.",
+            description="Maximum number of policies that are allowed to generate a single rollout. Rollouts that are generated from more than `max_off_policy_steps` steps ahead of training will be discarded. Higher values yield better throughput, but lead to more off-policyness in training.",
+        ),
+    ] = 8
+
+    max_async_level: Annotated[
+        int,
+        Field(
+            ge=0,
+            description="Maximum number of steps the inference can be ahead of training. If 0, will degenerate to synchronous on-policy RL. If >=1, training and inference will be overlapped.",
         ),
     ] = 1
+
+    strict_async_level: Annotated[
+        bool,
+        Field(
+            description="Whether to strictly enforce the max async level. If True, will always ensure that the policy used for generating rollouts is exactly `max_async_level` steps ahead of training. If False, any policy that is at most `max_async_level` steps ahead of training is allowed, i.e. we always use the latest available policy.",
+        ),
+    ] = True
 
     bench: Annotated[
         bool,
@@ -539,11 +520,18 @@ class OrchestratorConfig(BaseSettings):
 
     seed: Annotated[int | None, Field(description="Random seed for the orchestrator.")] = 42
 
+    lora_name: Annotated[
+        str | None,
+        Field(
+            description="Name of the LoRA to use for the orchestrator. If None, will not use any LoRA.",
+        ),
+    ] = None
+
     @model_validator(mode="after")
-    def ascyn_nccl(self):
+    def nccl_max_async_level(self):
         if self.weight_broadcast.type == "nccl":
-            if not self.async_level == 1:
-                raise ValueError("Async level must be 1 for NCCL broadcast")
+            if not self.max_async_level == 1:
+                raise ValueError("max_async_level must be 1 for NCCL broadcast")
         return self
 
     @model_validator(mode="after")
@@ -556,7 +544,7 @@ class OrchestratorConfig(BaseSettings):
     def auto_setup_bench(self):
         if self.bench:
             self.max_steps = 4  # Run for 1 warmup step + 3 evaluation steps
-            self.async_level = int(1e9)  # Never wait for RL weight checkpoints
+            self.max_async_level = int(1e9)  # Never wait for RL weight checkpoints
 
             # Disable evaluation
             self.eval = None
