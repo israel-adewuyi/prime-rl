@@ -296,13 +296,14 @@ class GradientAccumulator:
                 # Compute on GPU, then immediately move to CPU
                 grad_sq = (param.grad**2).detach()
                 grad_sq = get_real_tensor(grad_sq).to("cpu")
-                self.acc[hf_name] = self.beta * self.acc[hf_name] + (1 - self.beta) * grad_sq
+                # self.acc[hf_name] = self.beta * self.acc[hf_name] + (1 - self.beta) * grad_sq
+                self.acc[hf_name] += grad_sq
 
         self.log(step, monitor, logger)
 
         # Save accumulator every step (or interval)
         if self.acc_upload_interval and step % self.acc_upload_interval == 0:  # TODO: self.acc_save int
-            acc_path = self.output_dir / "grad_acc" / f"acc_trainbatch_512_beta_{self.beta}_step_{step}.pt"
+            acc_path = self.output_dir / "grad_acc" / f"acc_trainbatch_1024_beta_{self.beta}_step_{step}.pt"
             self._save_grad_ema(acc_path)
             logger.info(f"Saved gradient accumulator to {acc_path}")
 
@@ -398,7 +399,7 @@ class GradientAccumulator:
             metadata["total_file_size_bytes"] = acc_path.stat().st_size
 
             # Upload accumulator file
-            acc_filename = f"accumulators/acc_trainbatch_512_beta_{self.beta}_step_{step}.pt"
+            acc_filename = f"accumulators/acc_trainbatch_1024_beta_{self.beta}_step_{step}.pt"
             logger.info(f"Uploading accumulator to {self.hf_repo_id}/{acc_filename}")
             upload_file(
                 path_or_fileobj=str(acc_path),
@@ -408,7 +409,7 @@ class GradientAccumulator:
             )
 
             # Upload metadata
-            metadata_filename = f"metadata/acc_trainbatch_512_beta_{self.beta}_step_{step}_info.json"
+            metadata_filename = f"metadata/acc_trainbatch_1024_beta_{self.beta}_step_{step}_info.json"
             with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
                 json.dump(metadata, f, indent=2)
                 temp_path = f.name
