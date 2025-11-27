@@ -3,7 +3,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, Field, model_validator
 
-from prime_rl.utils.config import ClientConfig, LogConfig, ModelConfig, WandbMonitorConfig
+from prime_rl.utils.config import ClientConfig, LogConfig, ModelConfig, WandbMonitorConfig, TensorboardMonitorConfig
 from prime_rl.utils.pydantic_config import BaseConfig, BaseSettings
 
 
@@ -403,7 +403,7 @@ class OrchestratorConfig(BaseSettings):
     log: LogConfig = LogConfig()
 
     # The wandb configuration
-    wandb: WandbMonitorConfig = None
+    wandb: WandbMonitorConfig | TensorboardMonitorConfig = WandbMonitorConfig()
 
     # The checkpoint configuration
     ckpt: CheckpointConfig | None = None

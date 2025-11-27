@@ -39,7 +39,7 @@ from prime_rl.utils.client import (
     update_weights,
 )
 from prime_rl.utils.logger import setup_logger
-from prime_rl.utils.monitor import setup_monitor
+from prime_rl.utils.monitor import setup_monitor, setup_monitor_tensorboard
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.utils.utils import (
     clean_exit,
@@ -80,12 +80,21 @@ async def orchestrate(config: OrchestratorConfig):
 
     # Setup monitor
     logger.info(f"Initializing monitor ({config.wandb})")
-    monitor = setup_monitor(
-        config.wandb,
-        output_dir=config.output_dir,
-        tokenizer=tokenizer,
-        run_config=config,
-    )
+    if config.wandb.platform == "wandb":
+        monitor = setup_monitor(
+            config.wandb,
+            output_dir=config.output_dir,
+            tokenizer=tokenizer,
+            run_config=config,
+        )
+    else:
+        monitor = setup_monitor_tensorboard(
+            config.wandb,
+            output_dir=config.output_dir,
+            tokenizer=tokenizer,
+            run_config=config,
+        )
+        
 
     # Load environment and extract dataset
     logger.info(

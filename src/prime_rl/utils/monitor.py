@@ -305,7 +305,7 @@ class TensorboardMonitor:
         self.logger.info(f"Initializing {self.__class__.__name__} ({config})")
 
         # Initialize TensorBoard writer
-        log_dir = output_dir / config.log_dir if output_dir else Path(config.log_dir)
+        log_dir = output_dir / "runs" if output_dir else Path(config.log_dir)
         if config.name:
             log_dir = log_dir / config.name
         log_dir.mkdir(parents=True, exist_ok=True)

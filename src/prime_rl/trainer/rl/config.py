@@ -12,7 +12,7 @@ from prime_rl.trainer.config import (
     SchedulerConfigType,
     TokenizerConfig,
 )
-from prime_rl.utils.config import LogConfig, WandbMonitorConfig
+from prime_rl.utils.config import LogConfig, WandbMonitorConfig, TensorboardMonitorConfig
 from prime_rl.utils.pydantic_config import BaseConfig, BaseSettings
 
 
@@ -121,7 +121,7 @@ class RLTrainerConfig(BaseSettings):
     log: LogConfig = LogConfig()
 
     # The wandb configuration
-    wandb: WandbMonitorConfig = None
+    wandb: WandbMonitorConfig | TensorboardMonitorConfig = None
 
     load_mask: MaskTrainConfig | None = None
 
