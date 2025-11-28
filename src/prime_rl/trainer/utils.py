@@ -272,7 +272,7 @@ def load_masks_from_hf(config) -> OrderedDict:
     if config.mask_format == "old":
         filename = f"masks/beta_{config.beta}_step_{config.step}_tolerance_{config.tolerance}.pt"
     else:
-        filename = f"mask/beta_{config.beta}_batch_{config.batch}_step_{config.step}_active_{config.num_active}.pt"
+        filename = f"mask/batch_{config.batch}_active_{config.num_active}.pt"
 
     mask_path = hf_hub_download(repo_id=config.repo_id, filename=filename, repo_type="model", cache_dir=None)
 
