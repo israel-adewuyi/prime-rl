@@ -132,28 +132,29 @@ class Scheduler:
             tasks_to_update = []
 
             for task, (off_policy_steps, client) in self.inflight_group_rollouts.items():
-                if off_policy_steps > self.max_off_policy_steps:
-                    task.cancel()
+                if off_policy_steps > self.max_off_policy_steps and task.cancel():
                     tasks_to_remove.append((task, client))
                 else:
                     tasks_to_update.append((task, off_policy_steps + 1, client))
 
             # Remove cancelled tasks
             for task, client in tasks_to_remove:
-                self.inflight_group_rollouts.pop(task)
-                await self.schedule_group_rollout(client)
+                if self.inflight_group_rollouts.pop(task, None):
+                    await self.schedule_group_rollout(client)
 
             # Update retention steps for remaining tasks
             for task, off_policy_steps, client in tasks_to_update:
-                self.inflight_group_rollouts[task] = InflightRolloutInfo(
-                    off_policy_steps=off_policy_steps, client=client
-                )
+                if self.inflight_group_rollouts.get(task, None):
+                    self.inflight_group_rollouts[task] = InflightRolloutInfo(
+                        off_policy_steps=off_policy_steps, client=client
+                    )
+
             if len(tasks_to_remove) > 0:
                 self.logger.warning(f"Cancelled and re-scheduled {len(tasks_to_remove)} old rollout requests.")
 
             self.ckpt_step = next_ckpt_step
 
-    async def generate_batch(self, step: int, semaphore: asyncio.Semaphore | None = None) -> list[vf.State]:
+    async def generate_batch(self, step: int) -> list[vf.State]:
         """Continuously schedules group rollouts, allowing them to be in-flight across steps."""
         self.step = step
 
