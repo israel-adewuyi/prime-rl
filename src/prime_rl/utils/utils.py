@@ -4,6 +4,7 @@ import os
 import subprocess
 import time
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -293,6 +294,16 @@ def mean_normalize(values: list[float] | list[int]) -> list[float]:
     """Mean-Normalize a list of values to 0-1."""
     sum_values = sum(values)
     return [value / sum_values if sum_values > 0 else 0 for value in values]
+
+
+@contextmanager
+def default_dtype(dtype):
+    prev = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(prev)
 
 
 def install_env(env_id: str) -> None:
