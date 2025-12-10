@@ -107,6 +107,11 @@ class WeightBroadcastConfig(BaseSettings):
     )
 
 
+# Valid vLLM max_lora_rank values (from vllm/config/lora.py)
+# TODO: on newer vLLM, can import via `get_args(vllm.config.lora.MaxLoRARanks)`
+VALID_VLLM_LORA_RANKS = (8, 16, 32, 64, 128, 256, 320, 512)
+
+
 class InferenceConfig(BaseSettings):
     """Configures inference."""
 
@@ -161,6 +166,26 @@ class InferenceConfig(BaseSettings):
     def auto_setup_dynamic_lora_updating(self):
         if self.enable_lora:
             os.environ["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
+        return self
+
+    @model_validator(mode="after")
+    def round_up_max_lora_rank(self):
+        """Round up max_lora_rank to the nearest valid vLLM value.
+
+        vLLM only accepts specific values for max_lora_rank: (1, 8, 16, 32, 64, 128, 256, 320, 512).
+        This validator ensures that any configured rank is rounded up to the minimum valid value
+        that can serve adapters of the requested rank.
+        """
+        if self.max_lora_rank is not None:
+            original_rank = self.max_lora_rank
+            for valid_rank in VALID_VLLM_LORA_RANKS:
+                if valid_rank >= self.max_lora_rank:
+                    self.max_lora_rank = valid_rank
+                    break
+            else:
+                raise ValueError(
+                    f"max_lora_rank={original_rank} exceeds vLLM maximum of {VALID_VLLM_LORA_RANKS[-1]}"
+                )
         return self
 
     def to_vllm(self) -> Namespace:
