@@ -8,6 +8,7 @@ from prime_rl.trainer.config import (
     CheckpointConfig,
     ConstantSchedulerConfig,
     ModelConfig,
+    SparseAdamWConfig,
     OptimizerConfigType,
     SchedulerConfigType,
     TokenizerConfig,
@@ -86,7 +87,7 @@ class MaskTrainConfig(BaseModel):
     tolerance: Annotated[float, Field(description="The mask tolerance being downloaded")] = 1e-2
     mask_format: Annotated[str, Field(description="If the mask to be used for training is new or old")] = "old"
     batch: Annotated[int, Field(description="Batch size of the training used to generate mask")] = 1024
-    num_active: Annotated[int, Field(description="Number of active parameters in the grad mask")] = 247016
+    num_active: Annotated[str, Field(description="Number of active parameters in the grad mask")] = 247016
 
 
 class RLTrainerConfig(BaseSettings):
@@ -105,7 +106,7 @@ class RLTrainerConfig(BaseSettings):
     loss: LossConfig = LossConfig()
 
     # The optimizer configuration
-    optim: Annotated[OptimizerConfigType, Field(discriminator="type")] = AdamWConfig()
+    optim: Annotated[OptimizerConfigType, Field(discriminator="type")] = AdamWConfig(type="adamw")
 
     # The learning rate scheduler configuration
     scheduler: Annotated[SchedulerConfigType, Field(discriminator="type")] = ConstantSchedulerConfig()
