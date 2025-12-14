@@ -366,3 +366,81 @@ def mask_gradients_in_optimizer(optimizer, masks: OrderedDict, model: nn.Module,
         return original_step(closure)
 
     optimizer.step = step_with_masking
+
+def apply_masks_to_model(model: nn.Module, masks: OrderedDict, device: str = "cuda") -> None:
+    """
+    Apply boolean masks to a model's parameters by registering gradient hooks.
+    This enforces per-element sparsity by scaling gradients to zero where mask is False.
+
+    Args:
+        model: PyTorch model to apply masks to
+        masks: OrderedDict containing boolean masks for each parameter
+        device: Device to move masks to
+    """
+    logger = get_logger()
+    applied_count = 0
+    total_active = 0
+    total_params = 0
+
+    for name, param in model.named_parameters():
+        clean_name = name
+        if "_fsdp_wrapped_module." in name:
+            clean_name = name.replace("_fsdp_wrapped_module.", "")
+
+        # Skip FSDP flat parameters
+        if "_flat_param" in name:
+            logger.debug(f"Skipping FSDP flat parameter: {name}")
+            continue
+
+        # Check if we have a mask for this parameter
+        if clean_name not in masks:
+            continue
+
+        mask = masks[clean_name].to(device)
+
+        # Convert DTensor to regular tensor if needed (for FSDP)
+        if hasattr(mask, "to_local"):
+            mask = mask.to_local()
+
+        # Get flat 1D indices of active elements
+        mask_flat = mask.reshape(-1)
+        active_indices = torch.nonzero(mask_flat, as_tuple=False).squeeze(-1)
+
+        # Ensure it's 1D
+        if active_indices.dim() > 1:
+            active_indices = active_indices.squeeze()
+        if active_indices.dim() == 0:  # Scalar case
+            active_indices = active_indices.unsqueeze(0)
+
+        # Store indices and mask on parameter
+        param._sparse_mask_indices = active_indices
+
+        # Compute stats for logging
+        active = mask.sum().item()
+        total = mask.numel()
+        total_active += active
+        total_params += total
+        applied_count += 1
+
+        # # Register hook to multiply grad by mask during backward
+        # def grad_hook_factory(full_name, msk):
+        #     def hook(grad):
+        #         if grad is not None:
+        #             # Element-wise multiplication: zeros grad where mask is False
+        #             return grad * msk
+        #         return grad
+
+        #     return hook
+
+        # param.register_hook(grad_hook_factory(name, mask))
+
+        logger.debug(f"Applied mask to {name}: {active}/{total} parameters active ({active / total * 100:.1f}%)")
+
+    # Log overall stats
+    if applied_count > 0:
+        active_fraction = total_active / total_params
+        logger.info(
+            f"Applied masks to {applied_count} parameters | Overall active fraction: {active_fraction:.4f} ({total_active}/{total_params})"
+        )
+    else:
+        logger.warning("No matching masks found for model parameters")

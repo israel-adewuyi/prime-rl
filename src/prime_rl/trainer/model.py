@@ -300,7 +300,7 @@ def apply_compile(model: nn.Module, compile_config: CompileConfig):
     get_logger().info(f"Compiled {len(model.model.layers)} layers (fullgraph={compile_config.fullgraph})")
 
 
-def setup_model(config: ModelConfig, parallel_dims: ParallelDims) -> nn.Module:
+def setup_model(config: ModelConfig, parallel_dims: ParallelDims, mask_loading_config = None) -> nn.Module:
     if config.attn == "flash_attention_3" and not is_flash_attn_3_available():
         raise ValueError(
             "Flash attention 3 is only supported if the flash_attn_3 package is installed. Install with `uv pip install 'flash-attn-3 @ git+https://github.com/Dao-AILab/flash-attention.git@main#subdirectory=hopper' --no-build-isolation`"
@@ -319,6 +319,20 @@ def setup_model(config: ModelConfig, parallel_dims: ParallelDims) -> nn.Module:
         logger.warning("Cannot load model from meta device. Loading model to CPU instead.")
         model = get_model(config, device=torch.device("cpu"), dtype=DTYPE_MAP[config.optimization_dtype])
 
+    # Load masks if specified
+    masks = None
+    if mask_loading_config is not None:
+        from prime_rl.trainer.utils import load_masks_from_hf
+
+        logger.info(f"Loading masks from {mask_loading_config}")
+
+        try:
+            masks = load_masks_from_hf(mask_loading_config)
+            logger.info("Successfully loaded masks")
+        except Exception as e:
+            logger.error(f"Failed to load masks: {e}")
+            raise
+
     # Apply LoRA before FSDP setup
     if config.experimental.lora is not None:
         apply_lora_to_model(model, config.experimental.lora)
@@ -331,6 +345,22 @@ def setup_model(config: ModelConfig, parallel_dims: ParallelDims) -> nn.Module:
 
     setup_fsdp(model, config, parallel_dims)
 
+    if masks is not None:
+        try:
+            from prime_rl.trainer.utils import apply_masks_to_model
+
+            apply_masks_to_model(model, masks)
+            logger.info("Successfully applied masks to model parameters")
+        except Exception as e:
+            logger.error(f"Failed to apply masks: {e}")
+            raise
+
+    # TODO: Remove this line after final inspection.
+    if masks is not None:
+        del masks
+        for name, param in model.named_parameters():
+            logger.debug(f"Does param {name} have sparse indices? {hasattr(param, '_sparse_mask_indices')}")
+            
     if config.load_using_meta and can_load_dcp_from_hf(model):
         load_dcp_from_hf(model, config)
 
