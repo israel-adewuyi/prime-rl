@@ -64,9 +64,9 @@ def train(config: RLTrainerConfig):
 
     # Setup the monitor
     logger.info(f"Initializing monitor ({config.wandb})")
-    if config.wandb.platform == "wandb":
+    if config.wandb and config.wandb.platform == "wandb":
         monitor = setup_monitor(config.wandb, output_dir=config.output_dir, run_config=config)
-    else:
+    elif config.wandb and config.wandb.platform == "tensorboard":
         monitor = setup_monitor_tensorboard(config.wandb, output_dir=config.output_dir, run_config=config)
 
     # Set precision
@@ -84,7 +84,7 @@ def train(config: RLTrainerConfig):
 
     # Initialize the model and tokenizer
     logger.info(f"Initializing model ({config.model})")
-    model = setup_model(config.model, parallel_dims)
+    model = setup_model(config.model, parallel_dims, config.load_mask)
 
     logger.info(f"Initializing tokenizer ({config.tokenizer})")
     tokenizer = setup_tokenizer(config.tokenizer)
@@ -100,10 +100,10 @@ def train(config: RLTrainerConfig):
     logger.info(f"Using `{config.scheduler.type}` scheduler ({config.scheduler})")
 
     # Load mask and apply to optimizer
-    if config.load_mask:
-        logger.info(f"Loading masks with configs {config.load_mask}")
-        mask = load_masks_from_hf(config.load_mask)
-        mask_gradients_in_optimizer(optimizer, mask, model, verify_first_step=True)
+    # if config.load_mask:
+    #     logger.info(f"Loading masks with configs {config.load_mask}")
+    #     mask = load_masks_from_hf(config.load_mask)
+    #     mask_gradients_in_optimizer(optimizer, mask, model, verify_first_step=True)
 
     # Set up weight broadcast
     logger.info(f"Initializing weight broadcast ({config.weight_broadcast})")

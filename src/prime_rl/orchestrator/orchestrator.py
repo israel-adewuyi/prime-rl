@@ -80,14 +80,14 @@ async def orchestrate(config: OrchestratorConfig):
 
     # Setup monitor
     logger.info(f"Initializing monitor ({config.wandb})")
-    if config.wandb.platform == "wandb":
+    if config.wandb and config.wandb.platform == "wandb":
         monitor = setup_monitor(
             config.wandb,
             output_dir=config.output_dir,
             tokenizer=tokenizer,
             run_config=config,
         )
-    else:
+    elif config.wandb and config.wandb.platform == "tensorboard":
         monitor = setup_monitor_tensorboard(
             config.wandb,
             output_dir=config.output_dir,
