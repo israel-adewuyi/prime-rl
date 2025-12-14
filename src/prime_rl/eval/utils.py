@@ -184,6 +184,11 @@ async def run_eval(
             dataset_name = save_config.hf.dataset_name or get_hf_hub_dataset_name(results)
             dataset_subset = save_config.hf.dataset_subset or env.env_id
             dataset_split = save_config.hf.dataset_split or "evals"
+            
+            # Add string substitution for {step} placeholder  
+            step_value = str(step) if step is not None else ckpt_step
+            dataset_split = dataset_split.replace("{step}", step_value)
+            
             dataset.push_to_hub(dataset_name, dataset_subset, split=dataset_split, private=save_config.hf.private)
             default_org = whoami().get("name", "")
             repo_name = dataset_name if "/" in dataset_name else f"{default_org}/{dataset_name}"
