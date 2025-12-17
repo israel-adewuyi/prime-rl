@@ -3652,6 +3652,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "requests" },
     { name = "rich" },
+    { name = "tenacity" },
     { name = "textual" },
     { name = "wget" },
 ]
