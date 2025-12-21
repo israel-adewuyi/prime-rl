@@ -5,6 +5,7 @@ import time
 import tomli_w
 
 from prime_rl.orchestrator.advantage import compute_advantages
+from prime_rl.orchestrator.event_loop_lag import EventLoopLagMonitor
 from prime_rl.orchestrator.patches import monkey_patch_chat_completion_logprobs, monkey_patch_oai_iterable_types
 from prime_rl.orchestrator.trajectories import branch_rollout, interleave_rollout
 from prime_rl.transport import TrainingBatch, TrainingSample, setup_training_batch_sender
@@ -67,6 +68,9 @@ async def orchestrate(config: OrchestratorConfig):
     )
     vf.setup_logging(level=config.log.vf_level.upper())
     logger.info("Starting orchestrator")
+
+    event_loop_lag_monitor = EventLoopLagMonitor()
+    event_loop_lag_monitor_task = asyncio.create_task(event_loop_lag_monitor.run())
 
     # Print warning if running in benchmark mode
     if config.bench:
@@ -424,6 +428,8 @@ async def orchestrate(config: OrchestratorConfig):
             **scheduler.get_metrics(),
             # Buffer metrics
             **buffer.get_metrics(),
+            # Event loop lag metrics
+            **event_loop_lag_monitor.get_metrics(),
             # W&B axis
             "step": progress.step,
         }
@@ -461,6 +467,8 @@ async def orchestrate(config: OrchestratorConfig):
         progress.step += 1
         is_first_step = False
 
+        event_loop_lag_monitor.reset()
+
         # Send heartbeat if configured
         if heart is not None:
             heart.beat()
@@ -490,6 +498,9 @@ async def orchestrate(config: OrchestratorConfig):
 
     # Close training batch sender
     training_batch_sender.close()
+
+    # Cancel event loop lag monitor task
+    event_loop_lag_monitor_task.cancel()
 
     logger.success("Orchestrator finished.")
 
