@@ -41,6 +41,7 @@ from prime_rl.trainer.perf import get_perf_counter
 from prime_rl.trainer.utils import (
     MemoryProfiler,
     Tensors,
+    get_ckpt_disk_metrics,
     setup_torch_distributed,
     print_benchmark,
     get_response_lengths,
@@ -410,6 +411,11 @@ def train(config: RLTrainerConfig):
             "step": progress.step,
         }
         monitor.log(time_metrics)
+
+        # Log disk metrics
+        disk_metrics = get_ckpt_disk_metrics(config.output_dir)
+        disk_metrics["step"] = progress.step
+        monitor.log(disk_metrics)
 
         progress.step += 1
         is_first_step = False
