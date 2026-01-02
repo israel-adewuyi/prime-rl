@@ -38,7 +38,7 @@ dependencies = [
     "verifiers>=0.1.7",
     "prime-evals>=0.1.2",
     "prime-sandboxes>=0.2.3",
-    "flash-attn>=2.8.3",
+    # "flash-attn>=2.7.3",
     "hf-transfer>=0.1.9",
     "tensorboard>=2.20.0",
     "tensorboardx>=2.6.4",
@@ -73,12 +73,13 @@ reverse-text = { index = "primeintellect" }
 verifiers = { git = "https://github.com/PrimeIntellect-ai/verifiers.git", rev = "91f436d" }
 dion = { git = "https://github.com/samsja/dion.git", rev = "main" }
 torchtitan = { git = "https://github.com/pytorch/torchtitan", rev = "a1fdd7e" }
+# flash-attn = { path = "./flash_attn-2.7.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl" }
 
 [tool.uv.extra-build-dependencies]
-flash-attn = [{ requirement = "torch", match-runtime = true }]
+# flash-attn = [{ requirement = "torch", match-runtime = true }]
 
 [tool.uv.extra-build-variables]
-flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
+# flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
 
 [[tool.uv.index]]
 name = "primeintellect"

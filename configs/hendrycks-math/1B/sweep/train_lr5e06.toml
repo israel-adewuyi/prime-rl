@@ -1,0 +1,12 @@
+max_steps = 200
+
+[model]
+name = "Qwen/Qwen2.5-1.5B"
+
+[optim]
+lr = 5e-06
+
+[wandb]
+platform = "tensorboard"
+project = "slimpeft"
+name = "train_hendrycks_math_1.5B_FPT_lr=5e06"
