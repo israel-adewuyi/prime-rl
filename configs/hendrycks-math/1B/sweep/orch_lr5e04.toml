@@ -1,0 +1,32 @@
+max_steps = 200
+batch_size = 1024
+seq_len = 4096
+rollouts_per_example = 8
+mask_truncated_completions = false
+env = [
+    { id = "hendrycks-math" },
+]
+
+[model]
+name = "Qwen/Qwen2.5-1.5B"
+
+[wandb]
+platform = "tensorboard"
+project = "slimpeft"
+name = "orch_hendrycks_math_1.5B_FPT_lr=5e04"
+
+[wandb.log_extras]
+interval = 50
+
+[sampling]
+max_tokens = 2048
+
+[eval]
+env = [
+    { id = "math500", rollouts_per_example = 1 },
+]
+interval = 10
+
+[eval.sampling]
+max_tokens = 2048
+temperature = 0.9
