@@ -71,7 +71,7 @@ def save_grad(grad, cur_step, threshold, local_dir="outputs", hf_repo_id=None):
             cur_step,
             hf_repo_id,
             local_path,
-            hf_token="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",
+            hf_token="",
             repo_type="model",
             private=False,
         )
