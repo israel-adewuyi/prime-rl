@@ -95,9 +95,7 @@ GGT = torch.zeros((N, N), dtype=torch.float32)
 for i in range(N):
     # Load gradient i once and keep it
     print(f"Loading gradient {i}...")
-    grad_i = load_gradient(
-        step=i, threshold=75, hf_repo_id="israel-adewuyi/gradients", hf_token="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"
-    ).to(device)
+    grad_i = load_gradient(step=i, threshold=75, hf_repo_id="israel-adewuyi/gradients", hf_token="").to(device)
     # grad_i = torch.load(f"../../outputs/0.5B_AS_grad_{i}.pt").to(device)
 
     # Compute diagonal element
@@ -109,7 +107,7 @@ for i in range(N):
             step=j,
             threshold=75,
             hf_repo_id="israel-adewuyi/gradients",
-            hf_token="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",
+            hf_token="",
         ).to(device)
         val = torch.dot(grad_i, grad_j).cpu()
         GGT[i, j] = val
