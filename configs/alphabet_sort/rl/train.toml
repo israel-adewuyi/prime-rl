@@ -1,19 +1,12 @@
-max_steps = 101
+max_steps = 150
 
 [model]
-name = "Qwen/Qwen2.5-Math-1.5B" 
+name = "Qwen/Qwen2.5-0.5B-Instruct" 
 
 [optim]
-lr = 1e-4
+lr = 1e-6
 
 [wandb]
+platform = "tensorboard"
 project = "slimpeft"
-name = "train_math_qwen1.5B_hyperparamsweep_beta-0.99_step-5_batch-1024_lr-1e-4_sparsity-99.95"
-
-[load_mask]
-repo_id = "israel-adewuyi/Qwen2.5-Math-1.5B-Intellect_math-grad_mask"
-beta = 0.99
-step = 5
-mask_format = "new"
-batch = 1024
-num_active = 771857
+name = "train_AS_qwen0.5B_full_1e6_grad_pca_full"
