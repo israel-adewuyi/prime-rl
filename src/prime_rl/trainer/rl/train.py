@@ -41,10 +41,87 @@ from prime_rl.trainer.utils import (
     get_response_lengths,
 )
 from prime_rl.trainer.world import get_world
-from prime_rl.trainer.utils import load_masks_from_hf, mask_gradients_in_optimizer
 from prime_rl.utils.monitor import setup_monitor, setup_monitor_tensorboard
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.utils.utils import clean_exit, to_col_format
+
+from pathlib import Path
+import os
+from huggingface_hub import HfApi, create_repo, repo_exists
+
+
+def save_grad(grad, cur_step, threshold, local_dir="outputs", hf_repo_id=None):
+    # Create local directory if it doesn't exist
+    local_path = Path(local_dir)
+    local_path.mkdir(parents=True, exist_ok=True)
+
+    if cur_step < threshold:
+        # Save locally
+        filename = local_path / f"0.5B_AS_grad_{cur_step}.pt"
+        torch.save(grad, filename)
+        print(f"Saved gradient {cur_step} locally: {filename}")
+
+    else:
+        if hf_repo_id is None:
+            raise ValueError("HF repo ID must be provided for steps >= threshold")
+
+        # Save to HuggingFace Hub
+        save_to_hf(
+            grad,
+            cur_step,
+            hf_repo_id,
+            local_path,
+            hf_token="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",
+            repo_type="model",
+            private=False,
+        )
+
+
+def save_to_hf(grad, cur_step, hf_repo_id, local_cache_dir, hf_token=None, repo_type="model", private=True):
+    """
+    Save gradient to HuggingFace Hub, creating repo if it doesn't exist.
+    """
+    # First save locally as temporary file
+    temp_dir = local_cache_dir / "temp_hf_uploads"
+    temp_dir.mkdir(exist_ok=True)
+
+    temp_file = temp_dir / f"0.5B_AS_grad_{cur_step}.pt"
+    torch.save(grad, temp_file)
+
+    try:
+        # Initialize HF API
+        api = HfApi(token=hf_token)
+
+        # Check if repo exists, create if not
+        if not repo_exists(repo_id=hf_repo_id, repo_type=repo_type, token=hf_token):
+            print(f"Creating HF repository: {hf_repo_id} (type: {repo_type}, private: {private})")
+            create_repo(
+                repo_id=hf_repo_id,
+                repo_type=repo_type,
+                private=private,
+                token=hf_token,
+                exist_ok=True,  # Just in case
+            )
+
+        # Upload the file
+        api.upload_file(
+            path_or_fileobj=temp_file,
+            path_in_repo=f"gradients/0.5B_AS_grad_{cur_step}.pt",
+            repo_id=hf_repo_id,
+            repo_type=repo_type,
+            token=hf_token,
+            commit_message=f"Add gradient {cur_step} from 0.5B model",
+        )
+
+        print(f"✓ Uploaded gradient {cur_step} to HF: {hf_repo_id}/gradients/0.5B_AS_grad_{cur_step}.pt")
+
+    except Exception as e:
+        print(f"Error uploading gradient {cur_step} to HF: {e}")
+
+    finally:
+        # Clean up temp file
+        if temp_file.exists():
+            os.remove(temp_file)
 
 
 @clean_exit
@@ -282,6 +359,12 @@ def train(config: RLTrainerConfig):
             if "max_vio" in tensors:
                 micro_step_message += f" | Max Vio: {tensors['max_vio'][-1].mean().item():.4f}"
             logger.debug(micro_step_message)
+
+        # Extract and store the gradients
+        cur_grad = torch.cat(
+            [param.grad.detach().flatten(0).to_local() for param in model.parameters() if param.grad is not None]
+        )
+        save_grad(grad=cur_grad, cur_step=progress.step, threshold=75, hf_repo_id="israel-adewuyi/gradients")
 
         # Optionally, clip the gradients
         grad_norm_dtensor = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.optim.max_norm)
