@@ -6,6 +6,7 @@ Runs environment rollouts in a separate process to isolate event loop lag.
 
 import asyncio
 import queue
+import uuid
 from dataclasses import dataclass
 from itertools import cycle
 from multiprocessing import Process, Queue
@@ -27,7 +28,8 @@ class WorkerDiedError(Exception):
 class RolloutRequest:
     """Request to generate rollouts for an example."""
 
-    id: int  # example_id
+    request_id: str
+    example_id: int
     rollouts_per_example: int
     model_name: str  # Model name to use for this request (may change for LoRA)
 
@@ -36,7 +38,7 @@ class RolloutRequest:
 class RolloutResponse:
     """Response containing rollout results."""
 
-    id: str
+    request_id: str
     results: list[dict]  # Simplified state dicts
     lag_metrics: dict | None = None  # Event loop lag metrics from worker
 
@@ -88,7 +90,7 @@ async def process_request(
 ) -> RolloutResponse:
     """Process a single rollout request."""
     client = next(client_cycle)
-    example = example_lookup[request.id]
+    example = example_lookup[request.example_id]
     group_inputs = [vf.RolloutInput(**example) for _ in range(request.rollouts_per_example)]
 
     states = await env.run_group(
@@ -101,7 +103,7 @@ async def process_request(
     )
 
     results = [extract_result(state) for state in states]
-    return RolloutResponse(id=str(request.id), results=results)
+    return RolloutResponse(request_id=request.request_id, results=results)
 
 
 async def worker_loop(
@@ -125,7 +127,7 @@ async def worker_loop(
     lag_monitor_task = asyncio.create_task(lag_monitor.run())
 
     # Track in-flight tasks
-    pending_tasks: dict[asyncio.Task, int] = {}
+    pending_tasks: dict[asyncio.Task, str] = {}
 
     def check_for_requests():
         """Non-blocking check for new requests."""
@@ -139,7 +141,7 @@ async def worker_loop(
             task = asyncio.create_task(
                 process_request(request, env, client_cycle, semaphore, example_lookup, sampling_args)
             )
-            pending_tasks[task] = request.id
+            pending_tasks[task] = request.request_id
         return True
 
     try:
@@ -283,20 +285,22 @@ class EnvWorker:
         self,
         example_id: int,
         rollouts_per_example: int,
-    ) -> asyncio.Future:
-        """Submit a rollout request and return a future for the response."""
+    ) -> tuple[asyncio.Future, str]:
+        """Submit a rollout request and return a (future, request_id) tuple."""
+        request_id = uuid.uuid4().hex
         request = RolloutRequest(
-            id=example_id,
+            request_id=request_id,
+            example_id=example_id,
             rollouts_per_example=rollouts_per_example,
             model_name=self.model_name,
         )
 
         loop = asyncio.get_event_loop()
         future = loop.create_future()
-        self.pending_futures[str(example_id)] = future
+        self.pending_futures[request_id] = future
 
         self.request_queue.put(request)
-        return future
+        return future, request_id
 
     async def collect_responses(self):
         """Background task to collect responses and resolve futures."""
@@ -310,8 +314,8 @@ class EnvWorker:
                 # Store latest lag metrics from worker
                 if response.lag_metrics:
                     self.latest_lag_metrics = response.lag_metrics
-                if response.id in self.pending_futures:
-                    future = self.pending_futures.pop(response.id)
+                if response.request_id in self.pending_futures:
+                    future = self.pending_futures.pop(response.request_id)
                     # Check if future was cancelled (e.g., by update_policy)
                     if not future.done():
                         future.set_result(response.results)
