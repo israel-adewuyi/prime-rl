@@ -121,7 +121,6 @@ class NCCLWeightBroadcastSender:
         self.logger.debug(f"Broadcasting {num_state_dict_to_send} layer state dicts")
 
         for layer_id, state_dict in filter_state_dict_by_layers(state_dict, num_layers):
-            self.logger.debug(f"Sending layer {layer_id + 1}/{num_state_dict_to_send} state dict")
             for key, value in list(state_dict.items()):
                 if isinstance(value, DTensor):
                     value = cast(DTensor, value.to(self.dtype)).full_tensor()
