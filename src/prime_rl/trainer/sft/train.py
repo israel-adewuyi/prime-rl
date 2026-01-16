@@ -46,6 +46,8 @@ from prime_rl.utils.utils import clean_exit, to_col_format
 import torch.distributed as dist
 from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
 
+from torchtitan.distributed.utils import clip_grad_norm_
+
 
 @clean_exit
 @logger.catch(reraise=True)
@@ -115,7 +117,7 @@ def train(config: SFTTrainerConfig):
 
     # Set up the optimizer
     logger.info(f"Initializing optimizer ({config.optim})")
-    optimizer = setup_optimizer(config.optim, list(model.named_parameters()), parallel_dims.world_mesh["dp_shard_cp"])
+    optimizer = setup_optimizer(config.optim, list(model.named_parameters()), parallel_dims)
 
     # Set up the learning rate scheduler
     scheduler_steps = (
@@ -284,7 +286,11 @@ def train(config: SFTTrainerConfig):
             logger.debug(micro_step_message)
 
         logger.debug(f"Clipping gradients with max norm {config.optim.max_norm}")
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.optim.max_norm).full_tensor()
+        grad_norm = clip_grad_norm_(
+            model.parameters(), max_norm=config.optim.max_norm, ep_enabled=parallel_dims.ep_enabled
+        )
+        if grad_norm.device.type == "cpu":
+            grad_norm = grad_norm.to(torch.device("cuda"))
 
         logger.debug("Optimizer step")
         optimizer.step()

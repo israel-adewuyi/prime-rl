@@ -36,3 +36,4 @@ Documenting changes which affect configuration usage patterns (added/moved/remov
 - **`orchestrator.log.env_worker_logs`**: Added flag (default `False`) to write env worker logs to `logs/env_workers/{env_name}.log` (2026-01-15)
 - **`orchestrator.env.log`**: Removed. Use `orchestrator.log` for env worker logging instead (2026-01-15)
 - **`orchestrator.eval.retry.reraise`**: Changed default from `True` to `False`. When `False`, raises `tenacity.RetryError` after retries are exhausted instead of the original exception, allowing failed eval environments to be skipped with a warning (#1586, 2026-01-14)
+- **`model.ep`**: Expert parallelism now supported (with auto/custom impl only), changed from the old behaviour when `ep>1` was a no-op to a proper parallelization of the MoE layers. (#1595, 2026-01-15)
