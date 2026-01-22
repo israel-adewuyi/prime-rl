@@ -76,7 +76,7 @@ async def orchestrate(config: OrchestratorConfig):
         logger.warning(f"Running in benchmark mode (max_steps={config.max_steps})")
 
     # Save configs to output directory
-    config_dir = config.output_dir / "configs"
+    config_dir = config.output_dir / "control"
     config_dir.mkdir(parents=True, exist_ok=True)
     with open(config_dir / "orch.toml", "wb") as f:
         tomli_w.dump(config.model_dump(exclude_none=True, mode="json"), f)
@@ -254,6 +254,12 @@ async def orchestrate(config: OrchestratorConfig):
     max_empty_batch_retries = 5
 
     while True:
+        # Check if this run has been evicted by the trainer
+        evicted_path = config.output_dir / "control" / "evicted.txt"
+        if evicted_path.exists():
+            reason = evicted_path.read_text().strip()
+            raise RuntimeError(f"Run evicted by trainer: {reason}")
+
         # Check if update_policy_task has failed and propagate the exception
         if update_policy_task.done():
             # End all other tasks
