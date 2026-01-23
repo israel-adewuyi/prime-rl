@@ -17,6 +17,7 @@ from typing import Literal
 
 import httpx
 from httpx import AsyncClient
+from openai import AsyncOpenAI
 
 from prime_rl.utils.client import load_lora_adapter, setup_admin_clients, setup_clients
 from prime_rl.utils.config import ClientConfig
@@ -94,7 +95,7 @@ class ServerDiscovery:
         self.client_config = client_config
         self.sync_interval = sync_interval
 
-        self._clients: list = []
+        self._clients: list[AsyncOpenAI] = []
         self._urls: list[str] = []
         self._client_index = 0
         self._last_refresh = 0.0
@@ -113,7 +114,12 @@ class ServerDiscovery:
     def has_clients(self) -> bool:
         return len(self._clients) > 0
 
-    def get_next_client(self):
+    @property
+    def clients(self) -> list[AsyncOpenAI]:
+        """Get the current list of clients."""
+        return self._clients
+
+    def get_next_client(self) -> AsyncOpenAI | None:
         """Get next client in round-robin fashion."""
         if not self._clients:
             return None
@@ -134,17 +140,29 @@ class ServerDiscovery:
         self._urls = urls
         if urls:
             self.logger.debug(f"Discovered {len(urls)} ready server(s)")
-            self._clients = setup_clients(ClientConfig(
-                timeout=self.client_config.timeout,
-                base_url=urls,
-                api_key_var=self.client_config.api_key_var,
-                headers=self.client_config.headers,
-            ))
+            self._clients = setup_clients(
+                ClientConfig(
+                    timeout=self.client_config.timeout,
+                    base_url=urls,
+                    api_key_var=self.client_config.api_key_var,
+                    headers=self.client_config.headers,
+                )
+            )
         else:
             self.logger.debug("No ready inference servers found")
             self._clients = []
         self._client_index = 0
         return True
+
+    async def wait_for_clients(self) -> list[AsyncOpenAI]:
+        """Wait for clients to be available and return them."""
+        while not self.has_clients:
+            await self.refresh()
+            if not self.has_clients:
+                self.logger.debug(f"Waiting for inference servers with model {self.model_name}...")
+                await asyncio.sleep(self.sync_interval)
+
+        return self._clients
 
     async def stop(self) -> None:
         for client in self._clients:
@@ -158,6 +176,7 @@ class ServerDiscovery:
 @dataclass
 class AdapterState:
     """State of a LoRA adapter (loaded or desired)."""
+
     name: str | None = None
     path: Path | None = None
     step: int = 0
@@ -169,6 +188,7 @@ ServerStatus = Literal["discovering", "syncing", "ready", "unhealthy"]
 @dataclass
 class ServerState:
     """State of an individual inference server."""
+
     ip: str
     url: str
     status: ServerStatus = "discovering"
@@ -202,7 +222,7 @@ class ElasticInferencePool:
         self._lock = asyncio.Lock()
         self._desired: AdapterState = AdapterState()
 
-        self._clients: list = []
+        self._clients: list[AsyncOpenAI] = []
         self._client_urls: list[str] = []
 
         self._sync_task: asyncio.Task | None = None
@@ -231,16 +251,22 @@ class ElasticInferencePool:
         return [self._build_inference_url(ip) for ip, s in self._servers.items() if s.status == "ready"]
 
     @property
-    def clients(self) -> list:
+    def clients(self) -> list[AsyncOpenAI]:
         urls = self.ready_urls
         if set(urls) != set(self._client_urls):
             self._client_urls = urls
-            self._clients = setup_clients(ClientConfig(
-                timeout=self.client_config.timeout,
-                base_url=urls,
-                api_key_var=self.client_config.api_key_var,
-                headers=self.client_config.headers,
-            )) if urls else []
+            self._clients = (
+                setup_clients(
+                    ClientConfig(
+                        timeout=self.client_config.timeout,
+                        base_url=urls,
+                        api_key_var=self.client_config.api_key_var,
+                        headers=self.client_config.headers,
+                    )
+                )
+                if urls
+                else []
+            )
         return self._clients
 
     @property
@@ -414,9 +440,9 @@ class ElasticInferencePool:
 
     async def sync(self) -> tuple[int, int]:
         async with self._lock:
-            discovered_ips = set(await asyncio.get_event_loop().run_in_executor(
-                None, discover_server_ips, self.hostname
-            ))
+            discovered_ips = set(
+                await asyncio.get_event_loop().run_in_executor(None, discover_server_ips, self.hostname)
+            )
             known_ips = set(self._servers.keys())
 
             added = 0
