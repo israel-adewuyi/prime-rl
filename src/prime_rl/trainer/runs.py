@@ -11,6 +11,7 @@ import torch.distributed.distributed_c10d as c10d
 from prime_rl.trainer.config import LoRAConfig
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.logger import get_logger
+from prime_rl.utils.pathing import get_stable_ckpt_steps
 
 if TYPE_CHECKING:
     from prime_rl.orchestrator.config import OrchestratorConfig
@@ -262,13 +263,16 @@ class MultiRunManager:
         self.unused_idxs.remove(new_id)
         self.idx_2_id[new_id] = new_run
 
-        # Get progress
+        # Get progress from stable checkpoints (only checkpoints with STABLE file are considered)
         self.progress[new_id] = Progress()
-
-        prev_ckpt_steps = [
-            int(i.stem.split("_")[-1]) for i in (self.get_run_dir(new_id) / "checkpoints").glob("step_*")
-        ]
-        self.progress[new_id].step = max(prev_ckpt_steps) if prev_ckpt_steps else 0
+        if self.max_runs == 1:
+            prev_ckpt_steps = [
+                int(i.stem.split("_")[-1]) for i in (self.get_run_dir(new_id) / "checkpoints").glob("step_*")
+            ]
+            self.progress[new_id].step = max(prev_ckpt_steps) if prev_ckpt_steps else 0
+        else:
+            stable_steps = get_stable_ckpt_steps(self.get_run_dir(new_id) / "checkpoints")
+            self.progress[new_id].step = max(stable_steps) if stable_steps else 0
 
         # Store the parsed config
         self.config[new_id] = config
