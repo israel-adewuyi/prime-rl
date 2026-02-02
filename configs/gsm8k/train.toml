@@ -1,0 +1,19 @@
+max_steps = 100
+
+[model]
+name = "Qwen/Qwen2.5-0.5B"
+
+[optim]
+type="sparse_adamw"
+lr = 1e-6
+
+[wandb]
+platform = "tensorboard"
+project = "slimpeft_v2"
+name = "train_GSM8K-random1"
+
+[load_mask]
+repo_id = "israel-adewuyi/F_alphabet-sort_Qwen-0.5B-Instruct"
+mask_format = "new"
+batch = 1024
+num_active = "4940162random0"
