@@ -1,11 +1,14 @@
-max_steps = 1000
-
-[wandb]
+max_steps = 10
 
 [model]
-name = "willcb/DeepSeek-R1-Distill-Qwen-1.5B"
+name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+attn = "sdpa"
 
 [optim]
 lr = 1e-6
 
-[ckpt]
+[wandb]
+platform = "tensorboard"
+project = "slimpeft_v2"
+name = "train_1.5B_sample"
+
