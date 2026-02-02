@@ -38,7 +38,6 @@ dependencies = [
     "verifiers>=0.1.7",
     "prime-evals>=0.1.2",
     "prime-sandboxes>=0.2.3",
-    "flash-attn>=2.8.3",
     "hf-transfer>=0.1.9",
     "tensorboard>=2.20.0",
     "tensorboardx>=2.6.4",
@@ -75,10 +74,10 @@ dion = { git = "https://github.com/samsja/dion.git", rev = "main" }
 torchtitan = { git = "https://github.com/pytorch/torchtitan", rev = "a1fdd7e" }
 
 [tool.uv.extra-build-dependencies]
-flash-attn = [{ requirement = "torch", match-runtime = true }]
+
 
 [tool.uv.extra-build-variables]
-flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
+
 
 [[tool.uv.index]]
 name = "primeintellect"
