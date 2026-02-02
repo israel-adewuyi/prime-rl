@@ -349,9 +349,6 @@ async def _run_sweep(
     scale_delta: float,
     scale_eta: float,
 ) -> None:
-    if config.orchestrator.max_concurrent is not None:
-        await set_semaphore(config.orchestrator.max_concurrent)
-
     inference_pool = await setup_inference_pool(config.orchestrator.client, base_model=config.orchestrator.model.name)
     await inference_pool.wait_for_ready(config.orchestrator.model.name)
     teacher_pool = None
@@ -362,6 +359,10 @@ async def _run_sweep(
         await teacher_pool.wait_for_ready(config.orchestrator.teacher_model.model.name)
 
     env, examples, rollouts_per_example = _prepare_examples(config)
+    max_concurrent = config.orchestrator.max_concurrent
+    if max_concurrent is None:
+        max_concurrent = len(examples) * rollouts_per_example
+    await set_semaphore(max_concurrent)
     temperature = compute_temperature(0, config.orchestrator.sampling, config.orchestrator.max_steps)
     sampling_args = get_sampling_args(config.orchestrator.sampling, temperature=temperature)
 
