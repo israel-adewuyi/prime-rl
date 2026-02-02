@@ -316,6 +316,14 @@ def _prepare_sweep_points(grid) -> list[SweepPoint]:
     return [SweepPoint(alpha=a, beta=b) for a in alphas for b in betas]
 
 
+def _ensure_rollout_temperatures(rollouts: list[vf.State], default_temp: float) -> None:
+    for rollout in rollouts:
+        trajectory = rollout.get("trajectory") or []
+        for step in trajectory:
+            if "temperature" not in step:
+                step["temperature"] = default_temp
+
+
 def _write_metadata(config: LandscapeConfig, output_dir: Path) -> None:
     metadata_path = output_dir / config.sweep.metadata_file
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
@@ -427,6 +435,7 @@ async def _run_sweep(
             sampling_args=sampling_args,
             pbar_description=f"Rollouts (alpha={point.alpha:.3f}, beta={point.beta:.3f})",
         )
+        _ensure_rollout_temperatures(rollouts, temperature)
 
         rewards = [rollout["reward"] for rollout in rollouts]
         completion_lens = [get_completion_len(rollout) for rollout in rollouts]
