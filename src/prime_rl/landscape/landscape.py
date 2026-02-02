@@ -179,13 +179,15 @@ def _compute_loss(
     loss_scale = max(loss_scale, 1)
 
     losses = []
+    total_micro_batches = len(micro_batches)
     cp_enabled = parallel_dims.cp_enabled
     cp_rank = parallel_dims.world_mesh["cp"].get_local_rank() if cp_enabled else 0
     cp_group = parallel_dims.world_mesh["cp"].get_group() if cp_enabled else None
     cp_size = parallel_dims.cp
 
     with torch.no_grad():
-        for micro_batch in micro_batches:
+        for idx, micro_batch in enumerate(micro_batches, start=1):
+            logger.debug(f"Loss micro-batch {idx}/{total_micro_batches}")
             input_ids = micro_batch["input_ids"].to("cuda")
             position_ids = micro_batch["position_ids"].to("cuda")
             advantages = micro_batch["advantages"].to("cuda")
@@ -278,7 +280,9 @@ def _compute_loss(
             )
             losses.append(loss.detach().float().cpu().item())
 
-    return float(sum(losses) / max(len(losses), 1))
+    mean_loss = float(sum(losses) / max(len(losses), 1))
+    logger.debug(f"Loss over {total_micro_batches} micro-batches: {mean_loss:.6f}")
+    return mean_loss
 
 
 def _prepare_examples(config: LandscapeConfig):
