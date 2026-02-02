@@ -248,8 +248,14 @@ def gather_weights_on_master(
         cpu_state = {}
         for key, value in model.state_dict().items():
             if isinstance(value, DTensor):
-                # only gather after the downcast to dtype as it will be faster
-                value = cast(DTensor, value.to(dtype)).full_tensor()
+                if not torch.distributed.is_initialized() or torch.distributed.get_world_size() == 1:
+                    # Just extract the local tensor directly
+                    value = value._local_tensor.to(dtype)
+                else:
+                    # Multi-process case: gather after downcast to dtype
+                    value = cast(DTensor, value.to(dtype)).full_tensor()
+                # # only gather after the downcast to dtype as it will be faster
+                # value = cast(DTensor, value.to(dtype)).full_tensor()
 
             if is_master:
                 key = get_fqns(model, key)
