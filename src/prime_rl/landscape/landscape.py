@@ -107,7 +107,7 @@ def _apply_delta(
     for param in params:
         if not param.is_floating_point():
             continue
-        direction = torch.randn_like(param, generator=generator)
+        direction = torch.randn_like(param)
         if norm == "layer":
             param_norm = param.detach().float().norm()
             dir_norm = direction.float().norm()
