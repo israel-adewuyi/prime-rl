@@ -113,9 +113,9 @@ class LandscapeConfig(BaseSettings):
             raise ValueError(
                 f"trainer.model.name ({self.trainer.model.name}) must match orchestrator.model.name ({self.orchestrator.model.name})"
             )
-        if self.trainer.model.seq_len != self.orchestrator.seq_len:
+        if self.trainer.model.seq_len < self.orchestrator.seq_len:
             raise ValueError(
-                f"trainer.model.seq_len ({self.trainer.model.seq_len}) must match orchestrator.seq_len ({self.orchestrator.seq_len})"
+                f"trainer.model.seq_len ({self.trainer.model.seq_len}) must be >= orchestrator.seq_len ({self.orchestrator.seq_len})"
             )
         self.inference.model.name = self.trainer.model.name
         if self.trainer.weight_broadcast.type != "filesystem":
