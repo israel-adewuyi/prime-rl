@@ -356,7 +356,9 @@ async def _run_sweep(
     lora_enabled: bool,
     scale_delta: float,
     scale_eta: float,
+    logger,
 ) -> None:
+    logger.info(f"Running sweep with alpha={config.sweep.grid.alpha_min} to {config.sweep.grid.alpha_max} and beta={config.sweep.grid.beta_min} to {config.sweep.grid.beta_max}")
     inference_pool = await setup_inference_pool(config.orchestrator.client, base_model=config.orchestrator.model.name)
     await inference_pool.wait_for_ready(config.orchestrator.model.name)
     teacher_pool = None
@@ -436,7 +438,7 @@ async def _run_sweep(
             pbar_description=f"Rollouts (alpha={point.alpha:.3f}, beta={point.beta:.3f})",
         )
         _ensure_rollout_temperatures(rollouts, temperature)
-
+        logger.debug(f"Completed rollouts for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         rewards = [rollout["reward"] for rollout in rollouts]
         completion_lens = [get_completion_len(rollout) for rollout in rollouts]
         advantages = compute_advantages(
@@ -445,12 +447,13 @@ async def _run_sweep(
             rollouts_per_example,
             config.orchestrator.advantage,
         )
-
+        logger.debug(f"Completed advantages for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         rollout_fn = interleave_rollout if config.orchestrator.trajectory_strategy == "interleaved" else branch_rollout
         vlm_cache = None
         if is_vlm:
             vlm_cache = build_vlm_image_cache(rollouts, processor)
 
+        logger.debug(f"Building train examples for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         train_examples = []
         for rollout, advantage in zip(rollouts, advantages):
             if vlm_cache is not None:
@@ -464,10 +467,11 @@ async def _run_sweep(
                 sample.advantage = advantage
                 sample.reward = rollout["reward"]
             train_examples.extend(samples)
-
+        logger.debug(f"Completed train examples for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         if not train_examples:
             raise ValueError("No training samples were produced from rollouts")
 
+        logger.debug(f"Computing teacher logprobs for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         if config.orchestrator.teacher_model is not None:
             teacher_logprobs_list = await compute_teacher_logprobs(
                 clients=teacher_pool.clients,
@@ -476,7 +480,7 @@ async def _run_sweep(
             )
             for sample, teacher_logprobs in zip(train_examples, teacher_logprobs_list):
                 sample.teacher_logprobs = teacher_logprobs
-
+        logger.debug(f"Completed teacher logprobs for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         micro_batches_grid = prepare_batch(
             rollouts=train_examples,
             seq_len=config.trainer.model.seq_len,
@@ -488,7 +492,7 @@ async def _run_sweep(
         if not micro_batches_grid or not micro_batches_grid[0]:
             raise ValueError("No micro-batches were created from training samples")
         micro_batches = [_micro_batch_to_tensor(mb) for mb in micro_batches_grid[0]]
-
+        logger.debug(f"Completed micro-batches for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         loss_value = _compute_loss(
             model,
             micro_batches,
@@ -496,11 +500,11 @@ async def _run_sweep(
             parallel_dims,
             lora_enabled=lora_enabled,
         )
-
+        logger.debug(f"Completed loss for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         reward_mean = float(sum(rewards) / max(len(rewards), 1))
         reward_std = float(torch.tensor(rewards).float().std(unbiased=False).item()) if rewards else 0.0
         elapsed = time.perf_counter() - step_start
-
+        logger.debug(f"Completed elapsed time for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
         row = {
             "alpha": point.alpha,
             "beta": point.beta,
@@ -584,6 +588,7 @@ def main() -> None:
                 config.trainer.model.lora is not None,
                 scale_delta,
                 scale_eta,
+                logger_obj,
             )
         )
     finally:
