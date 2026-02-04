@@ -13,6 +13,9 @@ configs/endpoints.py
 **/logs
 **/wandb
 **/evals
+**/outputs
+**/outputs_2
+**/outputs_3
 final_summary.json
 .pydantic_config
 .chroma_db

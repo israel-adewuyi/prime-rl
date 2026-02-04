@@ -1,5 +1,5 @@
 [model]
-name = "Qwen/Qwen2.5-Math-1.5B"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [parallel]
 dp = 1

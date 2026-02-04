@@ -1,0 +1,34 @@
+max_steps = 100
+batch_size = 512
+seq_len = 6144
+rollouts_per_example = 16
+mask_truncated_completions = false
+
+[model]
+name = "Qwen/Qwen2.5-0.5B"
+
+[wandb]
+platform = "tensorboard"
+project = "slimpeft_v2"
+name = "orch_GSM8K-random1"
+
+[[env]]
+id = "gsm8k"
+
+[wandb.log_extras]
+interval = 50
+
+[sampling]
+max_tokens = 1024
+
+[eval]
+interval = 10
+rollouts_per_example = 1
+num_examples = -1
+env = [
+    { id = "gsm8k" },
+]
+
+[eval.sampling]
+max_tokens = 1024
+temperature = 0.9

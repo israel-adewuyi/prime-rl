@@ -5,16 +5,20 @@ from pathlib import Path
 import time
 
 # Define your learning rate sweep
+# learning_rates = [5e-5, 1e-4]
 
-learning_rates = [1e-5]
+# masks = ["14912384first2", "14912384last2"]
+# sparsities = ['', '']
 
-masks = ["4940162random0"]
-sparsities = ['99', ]
+learning_rates = [1e-4]
+
+masks = ["4940162random100", "4940162random110", "4940162random120", "4940162random130"]
+sparsities = ['99', '99', '99', '99']
 
 # Base config paths
-base_train = "configs/alphabet_sort/rl/train.toml"
-base_orch = "configs/alphabet_sort/rl/orch.toml"
-infer_config = "configs/alphabet_sort/rl/infer.toml"  # This stays unchanged
+base_train = "configs/gsm8k/train.toml"
+base_orch = "configs/gsm8k/orch.toml"
+infer_config = "configs/gsm8k/infer.toml"  # This stays unchanged
 
 # Directory for modified configs
 sweep_dir = Path("configs/gsm8k/sweep")
@@ -36,21 +40,18 @@ for mask, sp in zip(masks, sparsities):
         
         # Update learning rate in train.toml
         train_config['optim']['lr'] = lr
-        # train_config['load_mask']['num_active'] = mask
-        
-        # Update wandb names to include new learning rate
-        train_config['wandb']['name'] = f"train_alphabetsort-qwen0.5B_sparsity-{sp}_lr={lr_str}_{mask}_demo"
-        orch_config['wandb']['name'] = f"orch_alphabetsort-qwen0.5B_sparsity-{sp}_lr={lr_str}_{mask}_demo"
+        train_config['load_mask']['num_active'] = mask
+        train_config['output_dir'] = "outputs_3"
+        orch_config['output_dir'] = "outputs_3"
         orch_config['seq_len'] = 6144
         
-        # Save modified configs (tomli_w writes in binary mode)
-        train_path = sweep_dir / f"train_alphabetsort-qwen0.5B_sparsity-{sp}_lr{lr_str}_{mask}.toml"
-        orch_path = sweep_dir / f"orch_alphabetsort-qwen0.5B_sparsity-{sp}_lr{lr_str}_{mask}.toml"
+        # Update wandb names to include new learning rate
+        train_config['wandb']['name'] = f"train_gsm8k-qwen0.5B_sparsity-{sp}_lr={lr_str}_{mask}_SUP"
+        orch_config['wandb']['name'] = f"orch_gsm8k-qwen0.5B_sparsity-{sp}_lr={lr_str}_{mask}_SUP"
         
-        train_config["max_steps"] = 2
-        orch_config["max_steps"] = 2
-        orch_config["batch_size"] = 64
-        orch_config["eval"]["num_examples"] = 64
+        # Save modified configs (tomli_w writes in binary mode)
+        train_path = sweep_dir / f"train_gsm8k-qwen0.5B_sparsity-{sp}_lr{lr_str}_{mask}.toml"
+        orch_path = sweep_dir / f"orch_gsm8k-qwen0.5B_sparsity-{sp}_lr{lr_str}_{mask}.toml"
         
         with open(train_path, 'wb') as f:
             tomli_w.dump(train_config, f)
@@ -62,9 +63,12 @@ for mask, sp in zip(masks, sparsities):
         --trainer @ {train_path} \
         --orchestrator @ {orch_path} \
         --inference @ {infer_config} \
-        --trainer-gpu-ids 2 \
-        --inference-gpu-ids 2 \
-        --inference.gpu-memory-utilization 0.4 \
+        --inference.server.port 8002 \
+        --orchestrator.client.base-url http://localhost:8002/v1 \
+        --inference.gpu-memory-utilization 0.7 \
+        --output_dir outputs_3 \
+        --trainer-gpu-ids 0 \
+        --inference-gpu-ids 6 \
         --log.level debug"""
         
         print(f"\n{'='*60}")
