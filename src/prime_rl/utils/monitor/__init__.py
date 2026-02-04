@@ -6,12 +6,14 @@ from prime_rl.utils.config import PrimeMonitorConfig, WandbWithExtrasConfig
 from prime_rl.utils.monitor.base import Monitor, NoOpMonitor
 from prime_rl.utils.monitor.multi import MultiMonitor
 from prime_rl.utils.monitor.prime import PrimeMonitor
+from prime_rl.utils.monitor.tensorboard import TensorboardMonitor
 from prime_rl.utils.monitor.wandb import WandbMonitor
 from prime_rl.utils.pydantic_config import BaseSettings
 
 __all__ = [
     "Monitor",
     "WandbMonitor",
+    "TensorboardMonitor",
     "PrimeMonitor",
     "MultiMonitor",
     "NoOpMonitor",
@@ -53,14 +55,24 @@ def setup_monitor(
     monitors: list[Monitor] = []
 
     if wandb_config is not None:
-        monitors.append(
-            WandbMonitor(
-                config=wandb_config,
-                output_dir=output_dir,
-                tokenizer=tokenizer,
-                run_config=run_config,
+        if getattr(wandb_config, "platform", "wandb") == "tensorboard":
+            monitors.append(
+                TensorboardMonitor(
+                    config=wandb_config,
+                    output_dir=output_dir,
+                    tokenizer=tokenizer,
+                    run_config=run_config,
+                )
             )
-        )
+        else:
+            monitors.append(
+                WandbMonitor(
+                    config=wandb_config,
+                    output_dir=output_dir,
+                    tokenizer=tokenizer,
+                    run_config=run_config,
+                )
+            )
 
     if prime_config is not None:
         monitors.append(

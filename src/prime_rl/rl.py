@@ -62,6 +62,11 @@ class SharedWandbConfig(BaseSettings):
 
     offline: Annotated[bool | None, Field(description="Whether to run W&B in offline mode.")] = False
 
+    platform: Annotated[
+        Literal["wandb", "tensorboard"] | None,
+        Field(description="Monitoring platform to use."),
+    ] = "wandb"
+
 
 class SharedCheckpointConfig(BaseSettings):
     """Configures shared checkpoint configs."""
@@ -307,6 +312,10 @@ class RLConfig(BaseSettings):
             if self.wandb.offline:
                 self.trainer.wandb.offline = self.wandb.offline
                 self.orchestrator.wandb.offline = self.wandb.offline
+
+            if self.wandb.platform is not None:
+                self.trainer.wandb.platform = self.wandb.platform
+                self.orchestrator.wandb.platform = self.wandb.platform
 
         validate_shared_wandb_config(self.trainer, self.orchestrator)
 

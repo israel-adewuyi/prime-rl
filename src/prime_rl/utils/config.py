@@ -183,6 +183,11 @@ class WandbConfig(BaseConfig):
 
     offline: Annotated[bool, Field(description="Whether to run W&B in offline mode.")] = False
 
+    platform: Annotated[
+        Literal["wandb", "tensorboard"],
+        Field(description="Monitoring platform to use."),
+    ] = "wandb"
+
     # Individual configs (can only be specified on trainer or orchestrator)
     id: Annotated[
         str | None,
