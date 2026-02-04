@@ -11,6 +11,7 @@ configs/endpoints.py
 **/broadcasts
 **/rollouts
 **/logs
+**/sweep
 **/wandb
 **/evals
 **/outputs
