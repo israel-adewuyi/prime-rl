@@ -99,6 +99,18 @@ async def custom_run_server_worker(listen_address, sock, args, client_config=Non
         vllm_config = await engine_client.get_vllm_config()
         await init_app_state(engine_client, vllm_config, app.state, args)
 
+        # HACK: Apply chat template if provided
+        if hasattr(args, "chat_template") and args.chat_template:
+            from vllm.entrypoints.chat_utils import load_chat_template
+
+            resolved_chat_template = load_chat_template(args.chat_template)
+
+            # Update the chat serving handler with the template
+            if hasattr(app.state, "openai_serving_chat"):
+                app.state.openai_serving_chat.chat_template = resolved_chat_template
+            if hasattr(app.state, "openai_serving_chat_with_tokens"):
+                app.state.openai_serving_chat_with_tokens.chat_template = resolved_chat_template
+
         # This hack allows us to update lora adapters in-place by skipping the check for already loaded adapters.
         async def do_nothing(*args, **kwargs):
             return None

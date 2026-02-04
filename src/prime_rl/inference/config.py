@@ -90,6 +90,11 @@ class ModelConfig(BaseConfig):
         ),
     ] = "hermes"
 
+    chat_template: Annotated[
+        str | None,
+        Field(description="The chat template to use. If None, will use the tokenizer's default chat template."),
+    ] = None
+
 
 class WeightBroadcastConfig(BaseSettings):
     """Configures weight broadcast settings."""
@@ -151,6 +156,7 @@ class InferenceConfig(BaseSettings):
             "parallel.tp": "tensor_parallel_size",
             "parallel.dp": "data_parallel_size",
             "gpu_memory_utilization": "gpu_memory_utilization",
+            "model.chat_template": "chat_template",
         }
 
         for key in get_all_fields(self):
