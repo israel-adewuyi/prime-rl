@@ -158,7 +158,7 @@ class RLTrainerConfig(BaseSettings):
         Field(
             description="Directory to write outputs to. Will be populated with checkpoints, weights, rollouts and logs as subdirectories. Should be set to a persistent directory with enough disk space. This value should be distinct across experiments running on a single node. See the README for more details."
         ),
-    ] = Path("outputs")
+    ] = Path("outputs/run_default")
 
     max_steps: Annotated[
         int | None,
