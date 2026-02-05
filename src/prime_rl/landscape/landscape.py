@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import Popen
@@ -15,6 +16,7 @@ import torch.distributed as dist
 import torch.distributed.nn as dist_nn
 import verifiers as vf
 from loguru import logger
+from huggingface_hub import hf_hub_download
 from transformers import AutoProcessor
 
 from prime_rl.landscape.config import LandscapeConfig
@@ -51,11 +53,11 @@ class SweepPoint:
     beta: float
 
 
-def _iter_parameters(model: torch.nn.Module, param_filter: str) -> list[torch.nn.Parameter]:
+def _iter_named_parameters(model: torch.nn.Module, param_filter: str) -> list[tuple[str, torch.nn.Parameter]]:
     if param_filter == "all":
-        params = [param for param in model.parameters()]
+        params = [(name, param) for name, param in model.named_parameters()]
     else:
-        params = [param for param in model.parameters() if param.requires_grad]
+        params = [(name, param) for name, param in model.named_parameters() if param.requires_grad]
     if not params:
         raise ValueError("No parameters selected for perturbation")
     return params
@@ -72,13 +74,13 @@ def _check_single_device(params: Iterable[torch.nn.Parameter]) -> torch.device:
     return device
 
 
-def _compute_global_scale(params: list[torch.nn.Parameter], seed: int, epsilon: float) -> float:
-    device = _check_single_device(params)
+def _compute_global_scale(params: list[tuple[str, torch.nn.Parameter]], seed: int, epsilon: float) -> float:
+    device = _check_single_device(param for _, param in params)
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
     total_param_sq = torch.tensor(0.0, device=device)
     total_dir_sq = torch.tensor(0.0, device=device)
-    for param in params:
+    for _, param in params:
         if not param.is_floating_point():
             continue
         total_param_sq += param.detach().float().pow(2).sum()
@@ -91,31 +93,64 @@ def _compute_global_scale(params: list[torch.nn.Parameter], seed: int, epsilon: 
 
 
 def _apply_delta(
-    params: list[torch.nn.Parameter],
+    params: list[tuple[str, torch.nn.Parameter]],
     seed: int,
     scale: float,
     step: float,
     norm: str,
     epsilon: float,
+    direction: dict[str, torch.Tensor] | None = None,
 ) -> None:
     if step == 0.0:
         return
-    device = _check_single_device(params)
+    device = _check_single_device(param for _, param in params)
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
-    for param in params:
+    for name, param in params:
         if not param.is_floating_point():
             continue
-        direction = torch.randn_like(param)
-        if norm == "layer":
-            param_norm = param.detach().float().norm()
-            dir_norm = direction.float().norm()
-            if dir_norm.item() == 0.0:
-                continue
-            direction = direction * (param_norm / (dir_norm + epsilon))
+        if direction is None:
+            direction_tensor = torch.randn_like(param, generator=generator)
+            if norm == "layer":
+                param_norm = param.detach().float().norm()
+                dir_norm = direction_tensor.float().norm()
+                if dir_norm.item() == 0.0:
+                    continue
+                direction_tensor = direction_tensor * (param_norm / (dir_norm + epsilon))
+            else:
+                direction_tensor = direction_tensor * scale
         else:
-            direction = direction * scale
-        param.data.add_(direction, alpha=step)
+            if name not in direction:
+                raise ValueError(f"Direction is missing parameter: {name}")
+            direction_tensor = direction[name].to(device=param.device, dtype=param.dtype)
+        param.data.add_(direction_tensor, alpha=step)
+
+
+def _load_direction_state_dict(path: str) -> dict[str, torch.Tensor]:
+    if path.startswith("hf://"):
+        hf_ref = path.removeprefix("hf://")
+        parts = hf_ref.split("/", 1)
+        if len(parts) != 2:
+            raise ValueError("hf:// path must be in the form hf://<repo_id>/<filename>")
+        repo_id, filename = parts
+        resolved = hf_hub_download(repo_id=repo_id, filename=filename)
+        return torch.load(resolved, map_location="cpu")
+    return torch.load(path, map_location="cpu")
+
+
+def _prepare_direction_tensors(
+    params: list[tuple[str, torch.nn.Parameter]],
+    direction_state: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    direction = {}
+    for name, param in params:
+        if name not in direction_state:
+            raise ValueError(f"Direction state dict is missing parameter: {name}")
+        tensor = direction_state[name]
+        if tensor.shape != param.shape:
+            raise ValueError(f"Direction tensor shape mismatch for {name}: {tensor.shape} vs {param.shape}")
+        direction[name] = tensor.to(device=param.device, dtype=param.dtype)
+    return direction
 
 
 def _write_weights(
@@ -396,9 +431,19 @@ def _append_result(output_path: Path, row: dict) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     file_exists = output_path.exists()
     with open(output_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        fieldnames = list(row.keys())
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
+        else:
+            with open(output_path, "r", newline="") as read_f:
+                header = read_f.readline().strip()
+            if header and header != ",".join(fieldnames):
+                raise ValueError(
+                    f"Existing results file has different header: {header}. "
+                    f"Expected: {','.join(fieldnames)}. "
+                    "Delete the file or change output_dir to continue."
+                )
         writer.writerow(row)
 
 
@@ -433,6 +478,7 @@ async def _evaluate_point(
     baseline: bool,
     logger,
 ) -> None:
+    start_time = time.perf_counter()
     lora_name = config.orchestrator.model.lora.name if config.orchestrator.model.lora else None
     _write_weights(
         model,
@@ -525,6 +571,7 @@ async def _evaluate_point(
 
     reward_mean = float(sum(rewards) / max(len(rewards), 1))
     reward_std = float(torch.tensor(rewards).float().std(unbiased=False).item()) if rewards else 0.0
+    elapsed_s = time.perf_counter() - start_time
 
     row = {
         "alpha": alpha,
@@ -534,6 +581,7 @@ async def _evaluate_point(
         "reward_std": reward_std,
         "num_rollouts": len(rollouts),
         "num_examples": len(examples),
+        "elapsed_s": elapsed_s,
         "baseline": baseline,
     }
     _append_result(results_path, row)
@@ -546,11 +594,13 @@ async def _run_sweep(
     config: LandscapeConfig,
     output_dir: Path,
     model: torch.nn.Module,
-    params: list[torch.nn.Parameter],
+    params: list[tuple[str, torch.nn.Parameter]],
     parallel_dims,
     lora_enabled: bool,
     scale_delta: float,
     scale_eta: float,
+    delta_direction: dict[str, torch.Tensor] | None,
+    eta_direction: dict[str, torch.Tensor] | None,
     logger,
 ) -> None:
     logger.info(f"Running sweep with alpha={config.sweep.grid.alpha_min} to {config.sweep.grid.alpha_max} and beta={config.sweep.grid.beta_min} to {config.sweep.grid.beta_max}")
@@ -622,6 +672,7 @@ async def _run_sweep(
                 delta_alpha,
                 config.sweep.direction.norm,
                 config.sweep.direction.epsilon,
+                direction=delta_direction,
             )
             _apply_delta(
                 params,
@@ -630,6 +681,7 @@ async def _run_sweep(
                 delta_beta,
                 config.sweep.direction.norm,
                 config.sweep.direction.epsilon,
+                direction=eta_direction,
             )
         prev_alpha = point.alpha
         prev_beta = point.beta
@@ -703,7 +755,15 @@ def main() -> None:
         model = setup_model(config.trainer.model, parallel_dims, loading_from_checkpoint_later=False)
         model.eval()
 
-        params = _iter_parameters(model, config.sweep.direction.param_filter)
+        params = _iter_named_parameters(model, config.sweep.direction.param_filter)
+        delta_direction = None
+        eta_direction = None
+        if config.sweep.direction.delta_path:
+            delta_state = _load_direction_state_dict(config.sweep.direction.delta_path)
+            delta_direction = _prepare_direction_tensors(params, delta_state)
+        if config.sweep.direction.eta_path:
+            eta_state = _load_direction_state_dict(config.sweep.direction.eta_path)
+            eta_direction = _prepare_direction_tensors(params, eta_state)
         if config.sweep.direction.norm == "global":
             scale_delta = _compute_global_scale(
                 params, config.sweep.direction.seed_delta, config.sweep.direction.epsilon
@@ -725,6 +785,8 @@ def main() -> None:
                 config.trainer.model.lora is not None,
                 scale_delta,
                 scale_eta,
+                delta_direction,
+                eta_direction,
                 logger_obj,
             )
         )

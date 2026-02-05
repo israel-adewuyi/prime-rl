@@ -38,6 +38,14 @@ class DirectionConfig(BaseConfig):
         Field(description="Which parameters to perturb."),
     ] = "trainable"
     epsilon: Annotated[float, Field(ge=0, description="Numerical stability for norm scaling.")] = 1e-12
+    delta_path: Annotated[
+        str | None,
+        Field(description="Path or hf:// repo path to a .pt state dict for delta direction."),
+    ] = None
+    eta_path: Annotated[
+        str | None,
+        Field(description="Path or hf:// repo path to a .pt state dict for eta direction."),
+    ] = None
 
 
 class SweepConfig(BaseConfig):
