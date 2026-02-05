@@ -59,6 +59,7 @@ from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.utils.utils import clean_exit, resolve_latest_ckpt_step, to_col_format
 from ring_flash_attn import substitute_hf_flash_attn
 from torchtitan.distributed.utils import clip_grad_norm_
+from torch.distributed.tensor import DTensor
 
 
 @clean_exit
@@ -429,6 +430,21 @@ def train(config: RLTrainerConfig):
             logger.debug(micro_step_message)
 
         # Optionally, clip the gradients
+        if config.grad_dump is not None and progress.step in config.grad_dump.steps:
+            grad_dir = config.output_dir / config.grad_dump.output_dir
+            grad_dir.mkdir(parents=True, exist_ok=True)
+            grads = {}
+            for name, param in model.named_parameters():
+                if param.grad is None:
+                    continue
+                grad = param.grad
+                if isinstance(grad, DTensor):
+                    grad = grad.full_tensor()
+                if world.is_master:
+                    grads[name] = grad.detach().to("cpu", non_blocking=False)
+            dist.barrier()
+            if world.is_master:
+                torch.save(grads, grad_dir / f"step_{progress.step}.pt")
 
         grad_norm = clip_grad_norm_(
             model.parameters(), max_norm=config.optim.max_norm, ep_enabled=parallel_dims.ep_enabled
