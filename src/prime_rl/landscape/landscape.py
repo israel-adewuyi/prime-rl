@@ -4,7 +4,6 @@ import json
 import os
 import shutil
 import subprocess
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import Popen
@@ -411,6 +410,138 @@ def _append_rollouts(output_path: Path, rollouts: list[vf.State], alpha: float, 
             f.write("\n")
 
 
+async def _evaluate_point(
+    *,
+    config: LandscapeConfig,
+    model: torch.nn.Module,
+    parallel_dims,
+    lora_enabled: bool,
+    inference_pool,
+    teacher_pool,
+    env,
+    examples,
+    rollouts_per_example: int,
+    sampling_args: dict,
+    temperature: float,
+    is_vlm: bool,
+    processor,
+    weight_dir: Path,
+    results_path: Path,
+    rollouts_path: Path,
+    alpha: float,
+    beta: float,
+    baseline: bool,
+    logger,
+) -> None:
+    lora_name = config.orchestrator.model.lora.name if config.orchestrator.model.lora else None
+    _write_weights(
+        model,
+        weight_dir,
+        save_format=config.trainer.weight_broadcast.save_format,
+        save_sharded=config.trainer.weight_broadcast.save_sharded,
+        lora_name=lora_name,
+        lora_config=config.trainer.model.lora,
+    )
+    await inference_pool.update_weights(weight_dir, lora_name=lora_name)
+
+    rollouts = await generate_batch(
+        clients=inference_pool.clients,
+        env=env,
+        model_name=config.orchestrator.model.name,
+        examples=examples,
+        rollouts_per_example=rollouts_per_example,
+        sampling_args=sampling_args,
+        pbar_description=f"Rollouts (alpha={alpha:.3f}, beta={beta:.3f})",
+    )
+    _ensure_rollout_temperatures(rollouts, temperature)
+    _append_rollouts(rollouts_path, rollouts, alpha, beta)
+    logger.debug(f"Completed rollouts for alpha={alpha:.3f}, beta={beta:.3f}")
+
+    rewards = [rollout["reward"] for rollout in rollouts]
+    completion_lens = [get_completion_len(rollout) for rollout in rollouts]
+    advantages = compute_advantages(
+        rewards,
+        completion_lens,
+        rollouts_per_example,
+        config.orchestrator.advantage,
+    )
+    logger.debug(f"Completed advantages for alpha={alpha:.3f}, beta={beta:.3f}")
+
+    rollout_fn = interleave_rollout if config.orchestrator.trajectory_strategy == "interleaved" else branch_rollout
+    vlm_cache = None
+    if is_vlm:
+        vlm_cache = build_vlm_image_cache(rollouts, processor)
+
+    logger.debug(f"Building train examples for alpha={alpha:.3f}, beta={beta:.3f}")
+    train_examples = []
+    for rollout, advantage in zip(rollouts, advantages):
+        if vlm_cache is not None:
+            cached = vlm_cache.get(rollout["example_id"])
+            samples = rollout_fn(rollout, cached_pixel_values=cached[0], cached_image_grid_thw=cached[1])
+        else:
+            samples = rollout_fn(rollout)
+        if samples is None:
+            continue
+        for sample in samples:
+            sample.advantage = advantage
+            sample.reward = rollout["reward"]
+        train_examples.extend(samples)
+    logger.debug(f"Completed train examples for alpha={alpha:.3f}, beta={beta:.3f}")
+    if not train_examples:
+        raise ValueError("No training samples were produced from rollouts")
+
+    logger.debug(f"Computing teacher logprobs for alpha={alpha:.3f}, beta={beta:.3f}")
+    if config.orchestrator.teacher_model is not None:
+        teacher_logprobs_list = await compute_teacher_logprobs(
+            clients=teacher_pool.clients,
+            model_name=config.orchestrator.teacher_model.model.name,
+            samples=train_examples,
+        )
+        for sample, teacher_logprobs in zip(train_examples, teacher_logprobs_list):
+            sample.teacher_logprobs = teacher_logprobs
+    logger.debug(f"Completed teacher logprobs for alpha={alpha:.3f}, beta={beta:.3f}")
+
+    micro_batches_grid = prepare_batch(
+        rollouts=train_examples,
+        seq_len=config.trainer.model.seq_len,
+        pad_to_multiple_of=config.trainer.model.cp,
+        num_train_workers=1,
+        idxs=[0] * len(train_examples),
+        num_loras=1,
+    )
+    if not micro_batches_grid or not micro_batches_grid[0]:
+        raise ValueError("No micro-batches were created from training samples")
+    micro_batches = [_micro_batch_to_tensor(mb) for mb in micro_batches_grid[0]]
+    logger.debug(f"Completed micro-batches for alpha={alpha:.3f}, beta={beta:.3f}")
+
+    loss_value = _compute_loss(
+        model,
+        micro_batches,
+        config.trainer.loss,
+        parallel_dims,
+        lora_enabled=lora_enabled,
+    )
+    logger.debug(f"Completed loss for alpha={alpha:.3f}, beta={beta:.3f}")
+
+    reward_mean = float(sum(rewards) / max(len(rewards), 1))
+    reward_std = float(torch.tensor(rewards).float().std(unbiased=False).item()) if rewards else 0.0
+
+    row = {
+        "alpha": alpha,
+        "beta": beta,
+        "loss": loss_value,
+        "reward_mean": reward_mean,
+        "reward_std": reward_std,
+        "num_rollouts": len(rollouts),
+        "num_examples": len(examples),
+        "baseline": baseline,
+    }
+    _append_result(results_path, row)
+    logger.info(
+        f"alpha={alpha:.3f} beta={beta:.3f} loss={loss_value:.4f} reward_mean={reward_mean:.4f} baseline={baseline}"
+    )
+
+
 async def _run_sweep(
     config: LandscapeConfig,
     output_dir: Path,
@@ -448,19 +579,39 @@ async def _run_sweep(
         )
 
     sweep_points = _prepare_sweep_points(config.sweep.grid)
+    if not sweep_points or sweep_points[0] != SweepPoint(alpha=0.0, beta=0.0):
+        sweep_points = [SweepPoint(alpha=0.0, beta=0.0)] + sweep_points
 
     prev_alpha = 0.0
     prev_beta = 0.0
-    lora_name = None
-    if config.orchestrator.model.lora is not None:
-        lora_name = config.orchestrator.model.lora.name or "landscape"
-
     weight_dir = output_dir / config.sweep.weights_dir
     results_path = output_dir / config.sweep.results_file
     rollouts_path = output_dir / config.sweep.rollouts_file
 
+    await _evaluate_point(
+        config=config,
+        model=model,
+        parallel_dims=parallel_dims,
+        lora_enabled=lora_enabled,
+        inference_pool=inference_pool,
+        teacher_pool=teacher_pool,
+        env=env,
+        examples=examples,
+        rollouts_per_example=rollouts_per_example,
+        sampling_args=sampling_args,
+        temperature=temperature,
+        is_vlm=is_vlm,
+        processor=processor,
+        weight_dir=weight_dir,
+        results_path=results_path,
+        rollouts_path=rollouts_path,
+        alpha=0.0,
+        beta=0.0,
+        baseline=True,
+        logger=logger,
+    )
+
     for point in sweep_points:
-        step_start = time.perf_counter()
         delta_alpha = point.alpha - prev_alpha
         delta_beta = point.beta - prev_beta
         with torch.no_grad():
@@ -483,107 +634,27 @@ async def _run_sweep(
         prev_alpha = point.alpha
         prev_beta = point.beta
 
-        _write_weights(
-            model,
-            weight_dir,
-            save_format=config.trainer.weight_broadcast.save_format,
-            save_sharded=config.trainer.weight_broadcast.save_sharded,
-            lora_name=lora_name,
-            lora_config=config.trainer.model.lora,
-        )
-        await inference_pool.update_weights(weight_dir, lora_name=lora_name)
-
-        rollouts = await generate_batch(
-            clients=inference_pool.clients,
+        await _evaluate_point(
+            config=config,
+            model=model,
+            parallel_dims=parallel_dims,
+            lora_enabled=lora_enabled,
+            inference_pool=inference_pool,
+            teacher_pool=teacher_pool,
             env=env,
-            model_name=config.orchestrator.model.name,
             examples=examples,
             rollouts_per_example=rollouts_per_example,
             sampling_args=sampling_args,
-            pbar_description=f"Rollouts (alpha={point.alpha:.3f}, beta={point.beta:.3f})",
-        )
-        _ensure_rollout_temperatures(rollouts, temperature)
-        _append_rollouts(rollouts_path, rollouts, point.alpha, point.beta)
-        logger.debug(f"Completed rollouts for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        rewards = [rollout["reward"] for rollout in rollouts]
-        completion_lens = [get_completion_len(rollout) for rollout in rollouts]
-        advantages = compute_advantages(
-            rewards,
-            completion_lens,
-            rollouts_per_example,
-            config.orchestrator.advantage,
-        )
-        logger.debug(f"Completed advantages for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        rollout_fn = interleave_rollout if config.orchestrator.trajectory_strategy == "interleaved" else branch_rollout
-        vlm_cache = None
-        if is_vlm:
-            vlm_cache = build_vlm_image_cache(rollouts, processor)
-
-        logger.debug(f"Building train examples for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        train_examples = []
-        for rollout, advantage in zip(rollouts, advantages):
-            if vlm_cache is not None:
-                cached = vlm_cache.get(rollout["example_id"])
-                samples = rollout_fn(rollout, cached_pixel_values=cached[0], cached_image_grid_thw=cached[1])
-            else:
-                samples = rollout_fn(rollout)
-            if samples is None:
-                continue
-            for sample in samples:
-                sample.advantage = advantage
-                sample.reward = rollout["reward"]
-            train_examples.extend(samples)
-        logger.debug(f"Completed train examples for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        if not train_examples:
-            raise ValueError("No training samples were produced from rollouts")
-
-        logger.debug(f"Computing teacher logprobs for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        if config.orchestrator.teacher_model is not None:
-            teacher_logprobs_list = await compute_teacher_logprobs(
-                clients=teacher_pool.clients,
-                model_name=config.orchestrator.teacher_model.model.name,
-                samples=train_examples,
-            )
-            for sample, teacher_logprobs in zip(train_examples, teacher_logprobs_list):
-                sample.teacher_logprobs = teacher_logprobs
-        logger.debug(f"Completed teacher logprobs for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        micro_batches_grid = prepare_batch(
-            rollouts=train_examples,
-            seq_len=config.trainer.model.seq_len,
-            pad_to_multiple_of=config.trainer.model.cp,
-            num_train_workers=1,
-            idxs=[0] * len(train_examples),
-            num_loras=1,
-        )
-        if not micro_batches_grid or not micro_batches_grid[0]:
-            raise ValueError("No micro-batches were created from training samples")
-        micro_batches = [_micro_batch_to_tensor(mb) for mb in micro_batches_grid[0]]
-        logger.debug(f"Completed micro-batches for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        loss_value = _compute_loss(
-            model,
-            micro_batches,
-            config.trainer.loss,
-            parallel_dims,
-            lora_enabled=lora_enabled,
-        )
-        logger.debug(f"Completed loss for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        reward_mean = float(sum(rewards) / max(len(rewards), 1))
-        reward_std = float(torch.tensor(rewards).float().std(unbiased=False).item()) if rewards else 0.0
-        elapsed = time.perf_counter() - step_start
-        logger.debug(f"Completed elapsed time for alpha={point.alpha:.3f}, beta={point.beta:.3f}")
-        row = {
-            "alpha": point.alpha,
-            "beta": point.beta,
-            "loss": loss_value,
-            "reward_mean": reward_mean,
-            "reward_std": reward_std,
-            "num_rollouts": len(rollouts),
-            "num_examples": len(examples),
-            "elapsed_s": elapsed,
-        }
-        _append_result(results_path, row)
-        logger.info(
-            f"alpha={point.alpha:.3f} beta={point.beta:.3f} loss={loss_value:.4f} reward_mean={reward_mean:.4f}"
+            temperature=temperature,
+            is_vlm=is_vlm,
+            processor=processor,
+            weight_dir=weight_dir,
+            results_path=results_path,
+            rollouts_path=rollouts_path,
+            alpha=point.alpha,
+            beta=point.beta,
+            baseline=False,
+            logger=logger,
         )
 
     await inference_pool.stop()
