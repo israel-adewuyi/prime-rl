@@ -18,6 +18,24 @@ from prime_rl.utils.config import HeartbeatConfig, LogConfig, MetricsServerConfi
 from prime_rl.utils.pydantic_config import BaseConfig, BaseSettings
 
 
+class GradDumpConfig(BaseConfig):
+    """Configures gradient dumps."""
+
+    steps: Annotated[
+        list[int],
+        Field(
+            description="Steps at which to dump gradients.",
+        ),
+    ] = []
+
+    output_dir: Annotated[
+        Path,
+        Field(
+            description="Directory (relative to trainer output_dir) to write gradient dumps.",
+        ),
+    ] = Path("grads")
+
+
 class LossConfig(BaseConfig):
     """Base config for loss."""
 
@@ -200,6 +218,11 @@ class RLTrainerConfig(BaseSettings):
     metrics_server: Annotated[
         MetricsServerConfig | None,
         Field(description="Prometheus metrics server config. If set, exposes /metrics endpoint for scraping."),
+    ] = None
+
+    grad_dump: Annotated[
+        GradDumpConfig | None,
+        Field(description="Optional gradient dump configuration."),
     ] = None
 
     max_concurrent_runs: Annotated[
