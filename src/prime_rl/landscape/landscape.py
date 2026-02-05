@@ -15,14 +15,14 @@ import torch
 import torch.distributed as dist
 import torch.distributed.nn as dist_nn
 import verifiers as vf
-from loguru import logger
 from huggingface_hub import hf_hub_download
+from loguru import logger
 from transformers import AutoProcessor
 
 from prime_rl.landscape.config import LandscapeConfig
 from prime_rl.orchestrator.advantage import compute_advantages
 from prime_rl.orchestrator.buffer import Buffer
-from prime_rl.orchestrator.trajectories import build_vlm_image_cache, branch_rollout, interleave_rollout
+from prime_rl.orchestrator.trajectories import branch_rollout, build_vlm_image_cache, interleave_rollout
 from prime_rl.orchestrator.utils import compute_teacher_logprobs, get_sampling_args, set_semaphore
 from prime_rl.trainer.batch import prepare_batch
 from prime_rl.trainer.lora import save_lora_config
@@ -129,10 +129,9 @@ def _apply_delta(
 def _load_direction_state_dict(path: str) -> dict[str, torch.Tensor]:
     if path.startswith("hf://"):
         hf_ref = path.removeprefix("hf://")
-        parts = hf_ref.split("/", 1)
-        if len(parts) != 2:
-            raise ValueError("hf:// path must be in the form hf://<repo_id>/<filename>")
-        repo_id, filename = parts
+        parts = hf_ref.split("/", 2)
+        repo_id = "/".join(parts[:2])
+        filename = "/".join(parts[2:])
         resolved = hf_hub_download(repo_id=repo_id, filename=filename)
         loaded = torch.load(resolved, map_location="cpu")
     else:
@@ -610,7 +609,9 @@ async def _run_sweep(
     eta_direction: dict[str, torch.Tensor] | None,
     logger,
 ) -> None:
-    logger.info(f"Running sweep with alpha={config.sweep.grid.alpha_min} to {config.sweep.grid.alpha_max} and beta={config.sweep.grid.beta_min} to {config.sweep.grid.beta_max}")
+    logger.info(
+        f"Running sweep with alpha={config.sweep.grid.alpha_min} to {config.sweep.grid.alpha_max} and beta={config.sweep.grid.beta_min} to {config.sweep.grid.beta_max}"
+    )
     inference_pool = await setup_inference_pool(config.orchestrator.client, base_model=config.orchestrator.model.name)
     await inference_pool.wait_for_ready(config.orchestrator.model.name)
     teacher_pool = None
