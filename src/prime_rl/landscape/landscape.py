@@ -17,6 +17,7 @@ import torch.distributed.nn as dist_nn
 import verifiers as vf
 from huggingface_hub import hf_hub_download
 from loguru import logger
+from torch.distributed.tensor import DTensor
 from transformers import AutoProcessor
 
 from prime_rl.landscape.config import LandscapeConfig
@@ -123,6 +124,8 @@ def _apply_delta(
             if name not in direction:
                 raise ValueError(f"Direction is missing parameter: {name}")
             direction_tensor = direction[name].to(device=param.device, dtype=param.dtype)
+        if isinstance(param, DTensor) and not isinstance(direction_tensor, DTensor):
+            direction_tensor = DTensor.from_local(direction_tensor, param.device_mesh, param.placements)
         param.data.add_(direction_tensor, alpha=step)
 
 
