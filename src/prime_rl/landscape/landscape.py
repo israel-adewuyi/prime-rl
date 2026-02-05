@@ -134,8 +134,15 @@ def _load_direction_state_dict(path: str) -> dict[str, torch.Tensor]:
             raise ValueError("hf:// path must be in the form hf://<repo_id>/<filename>")
         repo_id, filename = parts
         resolved = hf_hub_download(repo_id=repo_id, filename=filename)
-        return torch.load(resolved, map_location="cpu")
-    return torch.load(path, map_location="cpu")
+        loaded = torch.load(resolved, map_location="cpu")
+    else:
+        loaded = torch.load(path, map_location="cpu")
+    if isinstance(loaded, dict):
+        if "state_dict" in loaded and isinstance(loaded["state_dict"], dict):
+            return loaded["state_dict"]
+        if all(isinstance(k, str) for k in loaded.keys()):
+            return loaded
+    raise ValueError("Direction file must be a state dict keyed by parameter names")
 
 
 def _prepare_direction_tensors(
