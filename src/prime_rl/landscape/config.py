@@ -83,6 +83,11 @@ class SweepConfig(BaseConfig):
         Field(description="JSON file (relative to output_dir) for sweep metadata."),
     ] = Path("metadata.json")
 
+    rollouts_file: Annotated[
+        Path,
+        Field(description="Text file (relative to output_dir) for human-readable rollouts."),
+    ] = Path("rollouts.txt")
+
 
 class LandscapeConfig(BaseSettings):
     trainer: RLTrainerConfig = RLTrainerConfig()
