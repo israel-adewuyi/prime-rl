@@ -75,58 +75,86 @@ def _check_single_device(params: Iterable[torch.nn.Parameter]) -> torch.device:
     return device
 
 
-def _compute_global_scale(params: list[tuple[str, torch.nn.Parameter]], seed: int, epsilon: float) -> float:
-    device = _check_single_device(param for _, param in params)
-    generator = torch.Generator(device=device)
-    generator.manual_seed(seed)
-    total_param_sq = torch.tensor(0.0, device=device)
-    total_dir_sq = torch.tensor(0.0, device=device)
-    for _, param in params:
-        if not param.is_floating_point():
-            continue
-        total_param_sq += param.detach().float().pow(2).sum()
-        direction = torch.randn_like(param, generator=generator)
-        total_dir_sq += direction.float().pow(2).sum()
-    if total_dir_sq.item() == 0.0:
-        return 0.0
-    scale = torch.sqrt(total_param_sq) / (torch.sqrt(total_dir_sq) + epsilon)
-    return float(scale.item())
+def _get_local_tensor(param: torch.nn.Parameter) -> torch.Tensor:
+    if isinstance(param, DTensor):
+        if hasattr(param, "to_local"):
+            return param.to_local()
+        return param._local_tensor
+    return param
 
 
-def _apply_delta(
+def _maybe_all_reduce(tensor: torch.Tensor) -> None:
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+
+
+def _build_random_direction(
     params: list[tuple[str, torch.nn.Parameter]],
+    base_tensors: dict[str, torch.Tensor],
     seed: int,
-    scale: float,
-    step: float,
     norm: str,
     epsilon: float,
-    direction: dict[str, torch.Tensor] | None = None,
-) -> None:
-    if step == 0.0:
-        return
-    device = _check_single_device(param for _, param in params)
+) -> dict[str, torch.Tensor]:
+    device = _check_single_device(_get_local_tensor(param) for _, param in params)
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
+    raw = {}
+    total_param_sq = torch.tensor(0.0, device=device)
+    total_dir_sq = torch.tensor(0.0, device=device)
     for name, param in params:
         if not param.is_floating_point():
             continue
-        if direction is None:
-            direction_tensor = torch.randn_like(param, generator=generator)
-            if norm == "layer":
-                param_norm = param.detach().float().norm()
-                dir_norm = direction_tensor.float().norm()
-                if dir_norm.item() == 0.0:
-                    continue
-                direction_tensor = direction_tensor * (param_norm / (dir_norm + epsilon))
-            else:
-                direction_tensor = direction_tensor * scale
-        else:
-            if name not in direction:
-                raise ValueError(f"Direction is missing parameter: {name}")
-            direction_tensor = direction[name].to(device=param.device, dtype=param.dtype)
-        if isinstance(param, DTensor) and not isinstance(direction_tensor, DTensor):
-            direction_tensor = DTensor.from_local(direction_tensor, param.device_mesh, param.placements)
-        param.data.add_(direction_tensor, alpha=step)
+        base_tensor = base_tensors[name]
+        raw_dir = torch.randn_like(base_tensor, generator=generator)
+        raw[name] = raw_dir
+        if norm == "global":
+            total_param_sq = total_param_sq + base_tensor.float().pow(2).sum()
+            total_dir_sq = total_dir_sq + raw_dir.float().pow(2).sum()
+
+    if norm == "global":
+        _maybe_all_reduce(total_param_sq)
+        _maybe_all_reduce(total_dir_sq)
+        if total_dir_sq.item() == 0.0:
+            raise ValueError("Direction has zero norm")
+        scale = torch.sqrt(total_param_sq) / (torch.sqrt(total_dir_sq) + epsilon)
+
+    direction = {}
+    for name, param in params:
+        if not param.is_floating_point():
+            continue
+        base_tensor = base_tensors[name]
+        raw_dir = raw[name]
+        if norm == "layer":
+            param_sq = base_tensor.float().pow(2).sum()
+            dir_sq = raw_dir.float().pow(2).sum()
+            _maybe_all_reduce(param_sq)
+            _maybe_all_reduce(dir_sq)
+            if dir_sq.item() == 0.0:
+                raise ValueError(f"Direction has zero norm for parameter {name}")
+            scale = torch.sqrt(param_sq) / (torch.sqrt(dir_sq) + epsilon)
+        direction[name] = raw_dir * scale
+    return direction
+
+
+def _apply_point(
+    params: list[tuple[str, torch.nn.Parameter]],
+    base_tensors: dict[str, torch.Tensor],
+    delta_direction: dict[str, torch.Tensor],
+    eta_direction: dict[str, torch.Tensor],
+    alpha: float,
+    beta: float,
+) -> None:
+    for name, param in params:
+        if not param.is_floating_point():
+            continue
+        base_tensor = base_tensors[name]
+        delta = delta_direction[name]
+        eta = eta_direction[name]
+        updated = base_tensor + alpha * delta + beta * eta
+        updated = updated.to(device=base_tensor.device, dtype=base_tensor.dtype)
+        if isinstance(param, DTensor):
+            updated = DTensor.from_local(updated, param.device_mesh, param.placements)
+        param.data.copy_(updated)
 
 
 def _load_direction_state_dict(path: str) -> dict[str, torch.Tensor]:
@@ -156,9 +184,19 @@ def _prepare_direction_tensors(
         if name not in direction_state:
             raise ValueError(f"Direction state dict is missing parameter: {name}")
         tensor = direction_state[name]
-        if tensor.shape != param.shape:
-            raise ValueError(f"Direction tensor shape mismatch for {name}: {tensor.shape} vs {param.shape}")
-        direction[name] = tensor.to(device=param.device, dtype=param.dtype)
+        local_tensor = _get_local_tensor(param)
+        if tensor.shape != local_tensor.shape:
+            if isinstance(param, DTensor) and tensor.shape == param.shape:
+                if dist.is_initialized() and dist.get_world_size() > 1:
+                    raise ValueError(
+                        f"Direction tensor for {name} has global shape {tensor.shape}, "
+                        f"expected local shape {local_tensor.shape}."
+                    )
+            else:
+                raise ValueError(
+                    f"Direction tensor shape mismatch for {name}: {tensor.shape} vs {local_tensor.shape}"
+                )
+        direction[name] = tensor.to(device=local_tensor.device, dtype=local_tensor.dtype)
     return direction
 
 
@@ -604,12 +642,11 @@ async def _run_sweep(
     output_dir: Path,
     model: torch.nn.Module,
     params: list[tuple[str, torch.nn.Parameter]],
+    base_tensors: dict[str, torch.Tensor],
     parallel_dims,
     lora_enabled: bool,
-    scale_delta: float,
-    scale_eta: float,
-    delta_direction: dict[str, torch.Tensor] | None,
-    eta_direction: dict[str, torch.Tensor] | None,
+    delta_direction: dict[str, torch.Tensor],
+    eta_direction: dict[str, torch.Tensor],
     logger,
 ) -> None:
     logger.info(
@@ -640,15 +677,12 @@ async def _run_sweep(
         )
 
     sweep_points = _prepare_sweep_points(config.sweep.grid)
-    if not sweep_points or sweep_points[0] != SweepPoint(alpha=0.0, beta=0.0):
-        sweep_points = [SweepPoint(alpha=0.0, beta=0.0)] + sweep_points
 
-    prev_alpha = 0.0
-    prev_beta = 0.0
     weight_dir = output_dir / config.sweep.weights_dir
     results_path = output_dir / config.sweep.results_file
     rollouts_path = output_dir / config.sweep.rollouts_file
 
+    _apply_point(params, base_tensors, delta_direction, eta_direction, 0.0, 0.0)
     await _evaluate_point(
         config=config,
         model=model,
@@ -673,29 +707,8 @@ async def _run_sweep(
     )
 
     for point in sweep_points:
-        delta_alpha = point.alpha - prev_alpha
-        delta_beta = point.beta - prev_beta
         with torch.no_grad():
-            _apply_delta(
-                params,
-                config.sweep.direction.seed_delta,
-                scale_delta,
-                delta_alpha,
-                config.sweep.direction.norm,
-                config.sweep.direction.epsilon,
-                direction=delta_direction,
-            )
-            _apply_delta(
-                params,
-                config.sweep.direction.seed_eta,
-                scale_eta,
-                delta_beta,
-                config.sweep.direction.norm,
-                config.sweep.direction.epsilon,
-                direction=eta_direction,
-            )
-        prev_alpha = point.alpha
-        prev_beta = point.beta
+            _apply_point(params, base_tensors, delta_direction, eta_direction, point.alpha, point.beta)
 
         await _evaluate_point(
             config=config,
@@ -767,6 +780,12 @@ def main() -> None:
         model.eval()
 
         params = _iter_named_parameters(model, config.sweep.direction.param_filter)
+        base_tensors = {
+            name: _get_local_tensor(param).detach().clone()
+            for name, param in params
+            if param.is_floating_point()
+        }
+
         delta_direction = None
         eta_direction = None
         if config.sweep.direction.delta_path:
@@ -775,14 +794,22 @@ def main() -> None:
         if config.sweep.direction.eta_path:
             eta_state = _load_direction_state_dict(config.sweep.direction.eta_path)
             eta_direction = _prepare_direction_tensors(params, eta_state)
-        if config.sweep.direction.norm == "global":
-            scale_delta = _compute_global_scale(
-                params, config.sweep.direction.seed_delta, config.sweep.direction.epsilon
+        if delta_direction is None:
+            delta_direction = _build_random_direction(
+                params,
+                base_tensors,
+                config.sweep.direction.seed_delta,
+                config.sweep.direction.norm,
+                config.sweep.direction.epsilon,
             )
-            scale_eta = _compute_global_scale(params, config.sweep.direction.seed_eta, config.sweep.direction.epsilon)
-        else:
-            scale_delta = 1.0
-            scale_eta = 1.0
+        if eta_direction is None:
+            eta_direction = _build_random_direction(
+                params,
+                base_tensors,
+                config.sweep.direction.seed_eta,
+                config.sweep.direction.norm,
+                config.sweep.direction.epsilon,
+            )
 
         _write_metadata(config, output_dir)
 
@@ -792,10 +819,9 @@ def main() -> None:
                 output_dir,
                 model,
                 params,
+                base_tensors,
                 parallel_dims,
                 config.trainer.model.lora is not None,
-                scale_delta,
-                scale_eta,
                 delta_direction,
                 eta_direction,
                 logger_obj,
