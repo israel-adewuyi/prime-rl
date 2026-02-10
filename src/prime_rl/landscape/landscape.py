@@ -1116,6 +1116,8 @@ def main() -> None:
             )
         )
     finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
         if inference_process is not None and inference_process.poll() is None:
             inference_process.terminate()
             try:
