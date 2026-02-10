@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ import verifiers as vf
 from huggingface_hub import hf_hub_download
 from loguru import logger
 from torch.distributed.tensor import DTensor
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from transformers import AutoProcessor
 
 from prime_rl.landscape.config import LandscapeConfig
@@ -178,12 +180,26 @@ def _load_direction_state_dict(path: str) -> dict[str, torch.Tensor]:
 def _prepare_direction_tensors(
     params: list[tuple[str, torch.nn.Parameter]],
     direction_state: dict[str, torch.Tensor],
+    direction_name: str,
+    logger_obj,
 ) -> dict[str, torch.Tensor]:
+    selected_names = [name for name, _ in params]
+    selected_name_set = set(selected_names)
+    direction_keys = set(direction_state.keys())
+    extras = sorted(direction_keys - selected_name_set)
+    if extras:
+        logger_obj.info(
+            f"{direction_name} has {len(extras)} extra keys not in selected parameters; they will be ignored"
+        )
+        logger_obj.debug(f"{direction_name} extra keys: {extras}")
+
     direction = {}
     for name, param in params:
         if name not in direction_state:
             raise ValueError(f"Direction state dict is missing parameter: {name}")
         tensor = direction_state[name]
+        if not isinstance(tensor, torch.Tensor):
+            raise ValueError(f"Direction tensor for {name} in {direction_name} is not a torch.Tensor")
         local_tensor = _get_local_tensor(param)
         if tensor.shape != local_tensor.shape:
             if isinstance(param, DTensor) and tensor.shape == param.shape:
@@ -196,8 +212,231 @@ def _prepare_direction_tensors(
                 raise ValueError(
                     f"Direction tensor shape mismatch for {name}: {tensor.shape} vs {local_tensor.shape}"
                 )
-        direction[name] = tensor.to(device=local_tensor.device, dtype=local_tensor.dtype)
+        direction[name] = tensor.to(device=local_tensor.device, dtype=torch.float32)
     return direction
+
+
+def _global_dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    dot = torch.dot(a.float(), b.float())
+    _maybe_all_reduce(dot)
+    return dot
+
+
+def _global_norm(vector: torch.Tensor) -> torch.Tensor:
+    return torch.sqrt(torch.clamp(_global_dot(vector, vector), min=0.0))
+
+
+def _direction_stats(
+    names: list[str],
+    delta_direction: dict[str, torch.Tensor],
+    eta_direction: dict[str, torch.Tensor],
+    epsilon: float,
+) -> tuple[float, float, float, float]:
+    delta_vector = parameters_to_vector([delta_direction[name].float() for name in names])
+    eta_vector = parameters_to_vector([eta_direction[name].float() for name in names])
+    delta_norm = _global_norm(delta_vector).item()
+    eta_norm = _global_norm(eta_vector).item()
+    dot = _global_dot(delta_vector, eta_vector).item()
+    cosine = dot / (delta_norm * eta_norm + epsilon)
+    return delta_norm, eta_norm, dot, cosine
+
+
+def _log_direction_stats(
+    names: list[str],
+    delta_direction: dict[str, torch.Tensor],
+    eta_direction: dict[str, torch.Tensor],
+    epsilon: float,
+    label: str,
+    logger_obj,
+) -> None:
+    delta_norm, eta_norm, dot, cosine = _direction_stats(
+        names=names,
+        delta_direction=delta_direction,
+        eta_direction=eta_direction,
+        epsilon=epsilon,
+    )
+    logger_obj.info(
+        f"{label}: ||delta||={delta_norm:.8e}, ||eta||={eta_norm:.8e}, dot={dot:.8e}, cos(theta)={cosine:.8e}"
+    )
+
+
+def _should_normalize_tensor(name: str, tensor: torch.Tensor) -> bool:
+    if tensor.ndim < 2:
+        return False
+    if name.endswith(".bias"):
+        return False
+    return True
+
+
+def _orthogonalize_and_normalize_directions(
+    params: list[tuple[str, torch.nn.Parameter]],
+    base_tensors: dict[str, torch.Tensor],
+    delta_direction: dict[str, torch.Tensor],
+    eta_direction: dict[str, torch.Tensor],
+    epsilon: float,
+    collinear_threshold: float,
+    zero_skipped_tensors: bool,
+    fallback_seed: int,
+    logger_obj,
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    floating_names = [name for name, param in params if param.is_floating_point()]
+    if not floating_names:
+        raise ValueError("No floating-point parameters available for orthogonalization")
+
+    logger_obj.info(f"Orthogonalizing {len(floating_names)} floating-point tensors")
+    _log_direction_stats(
+        names=floating_names,
+        delta_direction=delta_direction,
+        eta_direction=eta_direction,
+        epsilon=epsilon,
+        label="Before orthogonalization",
+        logger_obj=logger_obj,
+    )
+
+    delta_tensors = [delta_direction[name].float() for name in floating_names]
+    eta_tensors = [eta_direction[name].float() for name in floating_names]
+    delta_vector = parameters_to_vector(delta_tensors)
+    eta_vector = parameters_to_vector(eta_tensors)
+
+    delta_norm = _global_norm(delta_vector)
+    if delta_norm.item() <= epsilon:
+        raise ValueError("delta direction has near-zero norm; cannot orthogonalize")
+    u1 = delta_vector / (delta_norm + epsilon)
+
+    proj = _global_dot(eta_vector, u1)
+    eta_orth = eta_vector - proj * u1
+    eta_orth_norm = _global_norm(eta_orth)
+
+    if eta_orth_norm.item() <= max(collinear_threshold, epsilon):
+        logger_obj.warning(
+            f"eta direction is nearly collinear with delta (||eta_orth||={eta_orth_norm.item():.8e}); "
+            "sampling random orthogonal fallback"
+        )
+        generator = torch.Generator(device=eta_vector.device)
+        generator.manual_seed(fallback_seed)
+        random_vector = torch.randn_like(eta_vector, generator=generator)
+        random_proj = _global_dot(random_vector, u1)
+        eta_orth = random_vector - random_proj * u1
+        eta_orth_norm = _global_norm(eta_orth)
+        if eta_orth_norm.item() <= epsilon:
+            raise ValueError("Random fallback direction also has near-zero norm after projection")
+
+    u2 = eta_orth / (eta_orth_norm + epsilon)
+
+    delta_orth_tensors = [torch.empty_like(tensor) for tensor in delta_tensors]
+    eta_orth_tensors = [torch.empty_like(tensor) for tensor in eta_tensors]
+    vector_to_parameters(u1, delta_orth_tensors)
+    vector_to_parameters(u2, eta_orth_tensors)
+
+    delta_orth = {name: tensor for name, tensor in zip(floating_names, delta_orth_tensors)}
+    eta_orth_dict = {name: tensor for name, tensor in zip(floating_names, eta_orth_tensors)}
+
+    _log_direction_stats(
+        names=floating_names,
+        delta_direction=delta_orth,
+        eta_direction=eta_orth_dict,
+        epsilon=epsilon,
+        label="After Gram-Schmidt",
+        logger_obj=logger_obj,
+    )
+
+    normalized_count = 0
+    skipped_count = 0
+    logger_obj.info("Starting per-tensor normalization against checkpoint weights")
+    for idx, name in enumerate(floating_names, start=1):
+        base_tensor = base_tensors[name].float()
+        delta_tensor = delta_orth[name]
+        eta_tensor = eta_orth_dict[name]
+        normalize = _should_normalize_tensor(name, base_tensor)
+
+        if normalize:
+            base_norm = base_tensor.norm()
+            delta_norm_i = delta_tensor.norm()
+            eta_norm_i = eta_tensor.norm()
+            delta_scale = base_norm / (delta_norm_i + epsilon)
+            eta_scale = base_norm / (eta_norm_i + epsilon)
+            delta_orth[name] = delta_tensor * delta_scale
+            eta_orth_dict[name] = eta_tensor * eta_scale
+            normalized_count += 1
+            logger_obj.info(
+                f"[{idx}/{len(floating_names)}] normalize {name}: "
+                f"|W|={base_norm.item():.8e}, |d|={delta_norm_i.item():.8e}, |e|={eta_norm_i.item():.8e}, "
+                f"scale_d={delta_scale.item():.8e}, scale_e={eta_scale.item():.8e}"
+            )
+        else:
+            skipped_count += 1
+            if zero_skipped_tensors:
+                delta_orth[name] = torch.zeros_like(delta_tensor)
+                eta_orth_dict[name] = torch.zeros_like(eta_tensor)
+            logger_obj.info(
+                f"[{idx}/{len(floating_names)}] skip {name}: ndim={base_tensor.ndim}, "
+                f"zeroed={zero_skipped_tensors}"
+            )
+
+    logger_obj.info(
+        f"Per-tensor normalization complete: normalized={normalized_count}, skipped={skipped_count}, "
+        f"zero_skipped_tensors={zero_skipped_tensors}"
+    )
+    _log_direction_stats(
+        names=floating_names,
+        delta_direction=delta_orth,
+        eta_direction=eta_orth_dict,
+        epsilon=epsilon,
+        label="After per-tensor normalization",
+        logger_obj=logger_obj,
+    )
+
+    return delta_orth, eta_orth_dict
+
+
+def _save_direction_state_dict(direction: dict[str, torch.Tensor], output_path: Path, logger_obj) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cpu_direction = {name: tensor.detach().cpu() for name, tensor in direction.items()}
+    torch.save(cpu_direction, output_path)
+    logger_obj.info(f"Saved direction state dict to {output_path}")
+
+
+def _infer_config_stem_from_argv() -> str:
+    argv = sys.argv[1:]
+    for idx, arg in enumerate(argv):
+        if arg == "@" and idx + 1 < len(argv):
+            return Path(argv[idx + 1]).stem
+        if arg.startswith("@") and len(arg) > 1:
+            return Path(arg[1:]).stem
+    return "landscape"
+
+
+def _build_orthogonalized_direction_paths(config: LandscapeConfig, output_dir: Path) -> tuple[Path, Path]:
+    config_stem = _infer_config_stem_from_argv()
+    suffix = config.sweep.direction.orthogonalized_suffix.strip()
+    suffix_part = f"_{suffix}" if suffix else ""
+    directions_dir = output_dir / config.sweep.direction.orthogonalized_subdir
+    delta_path = directions_dir / f"{config_stem}_delta{suffix_part}.pt"
+    eta_path = directions_dir / f"{config_stem}_eta{suffix_part}.pt"
+    return delta_path, eta_path
+
+
+def _sanity_check_restore_base(
+    params: list[tuple[str, torch.nn.Parameter]],
+    base_tensors: dict[str, torch.Tensor],
+    delta_direction: dict[str, torch.Tensor],
+    eta_direction: dict[str, torch.Tensor],
+    logger_obj,
+) -> None:
+    with torch.no_grad():
+        _apply_point(params, base_tensors, delta_direction, eta_direction, alpha=1e-3, beta=-1e-3)
+        _apply_point(params, base_tensors, delta_direction, eta_direction, alpha=0.0, beta=0.0)
+
+    max_abs_diff = 0.0
+    for name, param in params:
+        if not param.is_floating_point():
+            continue
+        restored = _get_local_tensor(param).detach()
+        expected = base_tensors[name]
+        diff = (restored - expected).abs().max().item()
+        if diff > max_abs_diff:
+            max_abs_diff = diff
+    logger_obj.info(f"Restore sanity check after perturbation: max_abs_diff={max_abs_diff:.8e}")
 
 
 def _write_weights(
@@ -788,13 +1027,50 @@ def main() -> None:
 
         delta_direction = None
         eta_direction = None
+        if config.sweep.direction.orthogonalize_paths:
+            if not config.sweep.direction.delta_path or not config.sweep.direction.eta_path:
+                raise ValueError("orthogonalize_paths=true requires both sweep.direction.delta_path and eta_path")
+
+            logger_obj.info("Orthogonalization toggle is enabled; loading delta/eta from configured paths")
+            delta_state_raw = _load_direction_state_dict(config.sweep.direction.delta_path)
+            eta_state_raw = _load_direction_state_dict(config.sweep.direction.eta_path)
+            delta_loaded = _prepare_direction_tensors(params, delta_state_raw, "delta", logger_obj)
+            eta_loaded = _prepare_direction_tensors(params, eta_state_raw, "eta", logger_obj)
+
+            logger_obj.info("Starting orthogonalization + per-tensor normalization pipeline")
+            delta_orth, eta_orth = _orthogonalize_and_normalize_directions(
+                params=params,
+                base_tensors=base_tensors,
+                delta_direction=delta_loaded,
+                eta_direction=eta_loaded,
+                epsilon=config.sweep.direction.epsilon,
+                collinear_threshold=config.sweep.direction.collinear_threshold,
+                zero_skipped_tensors=config.sweep.direction.zero_skipped_tensors,
+                fallback_seed=config.sweep.direction.seed_eta + 10_000,
+                logger_obj=logger_obj,
+            )
+
+            _sanity_check_restore_base(params, base_tensors, delta_orth, eta_orth, logger_obj)
+
+            orth_delta_path, orth_eta_path = _build_orthogonalized_direction_paths(config, output_dir)
+            _save_direction_state_dict(delta_orth, orth_delta_path, logger_obj)
+            _save_direction_state_dict(eta_orth, orth_eta_path, logger_obj)
+
+            config.sweep.direction.delta_path = str(orth_delta_path)
+            config.sweep.direction.eta_path = str(orth_eta_path)
+            logger_obj.info(
+                "Updated sweep.direction paths to generated orthogonalized files: "
+                f"delta_path={config.sweep.direction.delta_path}, eta_path={config.sweep.direction.eta_path}"
+            )
+
         if config.sweep.direction.delta_path:
             delta_state = _load_direction_state_dict(config.sweep.direction.delta_path)
-            delta_direction = _prepare_direction_tensors(params, delta_state)
+            delta_direction = _prepare_direction_tensors(params, delta_state, "delta", logger_obj)
         if config.sweep.direction.eta_path:
             eta_state = _load_direction_state_dict(config.sweep.direction.eta_path)
-            eta_direction = _prepare_direction_tensors(params, eta_state)
+            eta_direction = _prepare_direction_tensors(params, eta_state, "eta", logger_obj)
         if delta_direction is None:
+            logger_obj.info("No delta_path configured; building random delta direction")
             delta_direction = _build_random_direction(
                 params,
                 base_tensors,
@@ -803,6 +1079,7 @@ def main() -> None:
                 config.sweep.direction.epsilon,
             )
         if eta_direction is None:
+            logger_obj.info("No eta_path configured; building random eta direction")
             eta_direction = _build_random_direction(
                 params,
                 base_tensors,
@@ -810,6 +1087,16 @@ def main() -> None:
                 config.sweep.direction.norm,
                 config.sweep.direction.epsilon,
             )
+
+        floating_names = [name for name, param in params if param.is_floating_point()]
+        _log_direction_stats(
+            names=floating_names,
+            delta_direction=delta_direction,
+            eta_direction=eta_direction,
+            epsilon=config.sweep.direction.epsilon,
+            label="Final directions entering sweep",
+            logger_obj=logger_obj,
+        )
 
         _write_metadata(config, output_dir)
 

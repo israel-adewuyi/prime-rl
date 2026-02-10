@@ -46,6 +46,33 @@ class DirectionConfig(BaseConfig):
         str | None,
         Field(description="Path or hf:// repo path to a .pt state dict for eta direction."),
     ] = None
+    orthogonalize_paths: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, load delta_path/eta_path, build orthogonalized directions, save them, and use the saved paths."
+            )
+        ),
+    ] = False
+    orthogonalized_subdir: Annotated[
+        Path,
+        Field(description="Subdirectory (relative to output_dir) to store orthogonalized direction files."),
+    ] = Path("directions")
+    orthogonalized_suffix: Annotated[
+        str,
+        Field(description="Suffix appended to generated direction filenames."),
+    ] = "orth"
+    zero_skipped_tensors: Annotated[
+        bool,
+        Field(description="If true, set non-normalized tensors (e.g. 1D weights/biases) to zero in generated directions."),
+    ] = True
+    collinear_threshold: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            description="Threshold for treating the second direction as collinear after projection.",
+        ),
+    ] = 1e-10
 
 
 class SweepConfig(BaseConfig):

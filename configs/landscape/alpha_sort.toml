@@ -49,4 +49,7 @@ beta_steps = 20
 delta_path = "/home/user/israel/prime-rl/outputs/grads/step_148.pt"
 eta_path = "/home/user/israel/prime-rl/outputs/grads/step_149.pt"
 # eta_path = "hf://israel-adewuyi/gradients/gradients/0.5B_AS_grad_148.pt"
+orthogonalize_paths = false
+orthogonalized_subdir = "directions"
+orthogonalized_suffix = "orth"
 
