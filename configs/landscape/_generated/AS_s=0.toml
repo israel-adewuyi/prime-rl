@@ -1,0 +1,47 @@
+output_dir = "outputs/landscape"
+
+[trainer.model]
+name = "Qwen/Qwen2.5-0.5B-Instruct"
+seq_len = 32768
+
+[trainer.optim]
+lr = 1e-06
+
+[orchestrator]
+batch_size = 512
+seq_len = 32768
+rollouts_per_example = 4
+env = [
+    { id = "alphabet-sort" },
+]
+
+[orchestrator.model]
+name = "Qwen/Qwen2.5-0.5B-Instruct"
+
+[orchestrator.sampling]
+max_tokens = 784
+
+[orchestrator.eval]
+interval = 10
+rollouts_per_example = 2
+num_examples = 512
+env = [
+    { id = "alphabet-sort" },
+    { args = { min_turns = 2, max_turns = 2 } },
+]
+
+[sweep]
+results_file = "d=AS_m=qwen-05B_s=0_alphabeta=0,1.csv"
+rollouts_file = "d=AS_m=qwen-05B_s=0_alphabeta=0,1.txt"
+
+[sweep.grid]
+alpha_min = -0.1
+alpha_max = 0.1
+alpha_steps = 20
+beta_min = -0.1
+beta_max = 0.1
+beta_steps = 20
+
+[sweep.direction]
+delta_path = "/home/user/israel/prime-rl/outputs/grads/step_148.pt"
+eta_path = "/home/user/israel/prime-rl/outputs/grads/step_149.pt"

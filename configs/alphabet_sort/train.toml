@@ -1,0 +1,10 @@
+max_steps = 150
+
+[model]
+name = "israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL"
+# name = "PrimeIntellect/Qwen3-4B-Instruct-AlphabetSort-RL"
+seq_len = 16384
+
+
+[optim]
+lr = 1e-6

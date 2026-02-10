@@ -1,0 +1,23 @@
+max_steps = 150
+batch_size = 32
+seq_len = 16384
+rollouts_per_example = 4
+
+[model]
+name = "israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL"
+# name = "PrimeIntellect/Qwen3-4B-Instruct-AlphabetSort-RL"
+
+[[env]]
+id = "alphabet-sort"
+
+[sampling]
+max_tokens = 784
+
+[eval]
+interval = 10
+rollouts_per_example = 2
+num_examples = 512
+env = [
+    {id = 'alphabet-sort'},
+    {args = { min_turns = 2, max_turns = 2 }}
+]

@@ -1,0 +1,33 @@
+max_steps = 100
+batch_size = 512
+seq_len = 8192
+rollouts_per_example = 16
+
+[model]
+name = "Qwen/Qwen2.5-0.5B"
+
+[wandb]
+platform = "tensorboard"
+project = "viz_0.5B_run"
+name = "orch_run_1"
+
+[[env]]
+id = "gsm8k"
+
+[wandb.log_extras]
+interval = 50
+
+[sampling]
+max_tokens = 2048
+
+[eval]
+interval = 10
+rollouts_per_example = 1
+num_examples = -1
+env = [
+    { id = "gsm8k" },
+]
+
+[eval.sampling]
+max_tokens = 1024
+temperature = 0.9

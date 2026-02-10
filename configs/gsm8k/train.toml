@@ -1,0 +1,13 @@
+max_steps = 100
+
+[model]
+name = "Qwen/Qwen2.5-0.5B"
+seq_len = 8192
+
+[optim]
+lr = 1e-6
+
+[wandb]
+platform = "tensorboard"
+project = "viz_0.5B_run"
+name = "orch_run_1"

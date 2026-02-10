@@ -1,0 +1,22 @@
+max_steps = 2
+batch_size = 64
+seq_len = 8192
+rollouts_per_example = 8
+mask_truncated_completions = false
+env = [
+    { id = "hendrycks-math" },
+]
+
+[model]
+name = "Qwen/Qwen2.5-1.5B"
+
+[wandb]
+platform = "tensorboard"
+project = "slimpeft"
+name = "orch_qwen1.5B-base-hendryksmath-sparsity=99.99-lr=1e05_154265random42_SUP"
+
+[wandb.log_extras]
+interval = 10
+
+[sampling]
+max_tokens = 2048
