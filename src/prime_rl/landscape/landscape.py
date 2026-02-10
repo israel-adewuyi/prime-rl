@@ -177,11 +177,40 @@ def _load_direction_state_dict(path: str) -> dict[str, torch.Tensor]:
     raise ValueError("Direction file must be a state dict keyed by parameter names")
 
 
+def _find_direction_key_with_suffix(direction_state: dict[str, torch.Tensor], suffix: str) -> str | None:
+    matches = [key for key in direction_state if key.endswith(suffix)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _resolve_tied_weight_alias(
+    missing_name: str,
+    direction_state: dict[str, torch.Tensor],
+    tie_word_embeddings: bool,
+) -> str | None:
+    if not tie_word_embeddings:
+        return None
+
+    if missing_name.endswith("lm_head.weight"):
+        if "model.embed_tokens.weight" in direction_state:
+            return "model.embed_tokens.weight"
+        return _find_direction_key_with_suffix(direction_state, "embed_tokens.weight")
+
+    if missing_name.endswith("embed_tokens.weight"):
+        if "lm_head.weight" in direction_state:
+            return "lm_head.weight"
+        return _find_direction_key_with_suffix(direction_state, "lm_head.weight")
+
+    return None
+
+
 def _prepare_direction_tensors(
     params: list[tuple[str, torch.nn.Parameter]],
     direction_state: dict[str, torch.Tensor],
     direction_name: str,
     logger_obj,
+    tie_word_embeddings: bool = False,
 ) -> dict[str, torch.Tensor]:
     selected_names = [name for name, _ in params]
     selected_name_set = set(selected_names)
@@ -195,11 +224,23 @@ def _prepare_direction_tensors(
 
     direction = {}
     for name, param in params:
-        if name not in direction_state:
-            raise ValueError(f"Direction state dict is missing parameter: {name}")
-        tensor = direction_state[name]
+        if name in direction_state:
+            source_name = name
+        else:
+            alias_name = _resolve_tied_weight_alias(name, direction_state, tie_word_embeddings)
+            if alias_name is None:
+                raise ValueError(f"Direction state dict is missing parameter: {name}")
+            source_name = alias_name
+            logger_obj.info(
+                f"{direction_name} missing {name}; using tied-weight alias from {alias_name} "
+                f"(tie_word_embeddings={tie_word_embeddings})"
+            )
+
+        tensor = direction_state[source_name]
         if not isinstance(tensor, torch.Tensor):
-            raise ValueError(f"Direction tensor for {name} in {direction_name} is not a torch.Tensor")
+            raise ValueError(
+                f"Direction tensor for {source_name} (resolved for {name}) in {direction_name} is not a torch.Tensor"
+            )
         local_tensor = _get_local_tensor(param)
         if tensor.shape != local_tensor.shape:
             if isinstance(param, DTensor) and tensor.shape == param.shape:
@@ -969,6 +1010,8 @@ def main() -> None:
         parallel_dims = get_parallel_dims(config.trainer.model)
         model = setup_model(config.trainer.model, parallel_dims, loading_from_checkpoint_later=False)
         model.eval()
+        tie_word_embeddings = bool(getattr(model.config, "tie_word_embeddings", False))
+        logger_obj.info(f"Model tie_word_embeddings={tie_word_embeddings}")
 
         params = _iter_named_parameters(model, config.sweep.direction.param_filter)
         base_tensors = {
@@ -984,8 +1027,12 @@ def main() -> None:
             logger_obj.info("Orthogonalization toggle is enabled; loading delta/eta from configured paths")
             delta_state_raw = _load_direction_state_dict(config.sweep.direction.delta_path)
             eta_state_raw = _load_direction_state_dict(config.sweep.direction.eta_path)
-            delta_loaded = _prepare_direction_tensors(params, delta_state_raw, "delta", logger_obj)
-            eta_loaded = _prepare_direction_tensors(params, eta_state_raw, "eta", logger_obj)
+            delta_loaded = _prepare_direction_tensors(
+                params, delta_state_raw, "delta", logger_obj, tie_word_embeddings=tie_word_embeddings
+            )
+            eta_loaded = _prepare_direction_tensors(
+                params, eta_state_raw, "eta", logger_obj, tie_word_embeddings=tie_word_embeddings
+            )
 
             logger_obj.info("Starting orthogonalization + per-tensor normalization pipeline")
             delta_orth, eta_orth = _orthogonalize_and_normalize_directions(
@@ -1015,10 +1062,14 @@ def main() -> None:
 
         if config.sweep.direction.delta_path:
             delta_state = _load_direction_state_dict(config.sweep.direction.delta_path)
-            delta_direction = _prepare_direction_tensors(params, delta_state, "delta", logger_obj)
+            delta_direction = _prepare_direction_tensors(
+                params, delta_state, "delta", logger_obj, tie_word_embeddings=tie_word_embeddings
+            )
         if config.sweep.direction.eta_path:
             eta_state = _load_direction_state_dict(config.sweep.direction.eta_path)
-            eta_direction = _prepare_direction_tensors(params, eta_state, "eta", logger_obj)
+            eta_direction = _prepare_direction_tensors(
+                params, eta_state, "eta", logger_obj, tie_word_embeddings=tie_word_embeddings
+            )
         if delta_direction is None:
             logger_obj.info("No delta_path configured; building random delta direction")
             delta_direction = _build_random_direction(
