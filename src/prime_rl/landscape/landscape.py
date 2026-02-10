@@ -209,9 +209,7 @@ def _prepare_direction_tensors(
                         f"expected local shape {local_tensor.shape}."
                     )
             else:
-                raise ValueError(
-                    f"Direction tensor shape mismatch for {name}: {tensor.shape} vs {local_tensor.shape}"
-                )
+                raise ValueError(f"Direction tensor shape mismatch for {name}: {tensor.shape} vs {local_tensor.shape}")
         direction[name] = tensor.to(device=local_tensor.device, dtype=torch.float32)
     return direction
 
@@ -337,52 +335,6 @@ def _orthogonalize_and_normalize_directions(
         eta_direction=eta_orth_dict,
         epsilon=epsilon,
         label="After Gram-Schmidt",
-        logger_obj=logger_obj,
-    )
-
-    normalized_count = 0
-    skipped_count = 0
-    logger_obj.info("Starting per-tensor normalization against checkpoint weights")
-    for idx, name in enumerate(floating_names, start=1):
-        base_tensor = base_tensors[name].float()
-        delta_tensor = delta_orth[name]
-        eta_tensor = eta_orth_dict[name]
-        normalize = _should_normalize_tensor(name, base_tensor)
-
-        if normalize:
-            base_norm = base_tensor.norm()
-            delta_norm_i = delta_tensor.norm()
-            eta_norm_i = eta_tensor.norm()
-            delta_scale = base_norm / (delta_norm_i + epsilon)
-            eta_scale = base_norm / (eta_norm_i + epsilon)
-            delta_orth[name] = delta_tensor * delta_scale
-            eta_orth_dict[name] = eta_tensor * eta_scale
-            normalized_count += 1
-            logger_obj.info(
-                f"[{idx}/{len(floating_names)}] normalize {name}: "
-                f"|W|={base_norm.item():.8e}, |d|={delta_norm_i.item():.8e}, |e|={eta_norm_i.item():.8e}, "
-                f"scale_d={delta_scale.item():.8e}, scale_e={eta_scale.item():.8e}"
-            )
-        else:
-            skipped_count += 1
-            if zero_skipped_tensors:
-                delta_orth[name] = torch.zeros_like(delta_tensor)
-                eta_orth_dict[name] = torch.zeros_like(eta_tensor)
-            logger_obj.info(
-                f"[{idx}/{len(floating_names)}] skip {name}: ndim={base_tensor.ndim}, "
-                f"zeroed={zero_skipped_tensors}"
-            )
-
-    logger_obj.info(
-        f"Per-tensor normalization complete: normalized={normalized_count}, skipped={skipped_count}, "
-        f"zero_skipped_tensors={zero_skipped_tensors}"
-    )
-    _log_direction_stats(
-        names=floating_names,
-        delta_direction=delta_orth,
-        eta_direction=eta_orth_dict,
-        epsilon=epsilon,
-        label="After per-tensor normalization",
         logger_obj=logger_obj,
     )
 
@@ -1020,9 +972,7 @@ def main() -> None:
 
         params = _iter_named_parameters(model, config.sweep.direction.param_filter)
         base_tensors = {
-            name: _get_local_tensor(param).detach().clone()
-            for name, param in params
-            if param.is_floating_point()
+            name: _get_local_tensor(param).detach().clone() for name, param in params if param.is_floating_point()
         }
 
         delta_direction = None
