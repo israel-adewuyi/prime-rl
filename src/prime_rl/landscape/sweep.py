@@ -7,7 +7,7 @@ import verifiers as vf
 from transformers import AutoProcessor
 
 from prime_rl.landscape.config import LandscapeConfig
-from prime_rl.landscape.directions import apply_point, compute_parameter_delta_stats
+from prime_rl.landscape.directions import apply_point, compute_parameter_delta_stats, get_local_tensor
 from prime_rl.landscape.eval_loss import compute_eval_loss, micro_batch_to_tensor
 from prime_rl.landscape.io import append_result
 from prime_rl.landscape.weights import write_weights
@@ -36,6 +36,56 @@ class FixedOldPolicyBatch:
     reward_mean: float
     reward_std: float
     num_rollouts: int
+
+
+def _resolve_probe_param_names(params: list[tuple[str, torch.nn.Parameter]]) -> dict[str, str]:
+    probe_candidates = {
+        "lm_head": (
+            "lm_head.weight",
+        ),
+        "embed_tokens": (
+            "model.embed_tokens.weight",
+            "model.language_model.model.embed_tokens.weight",
+            "embed_tokens.weight",
+        ),
+        "layer0_attn_q": (
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.language_model.model.layers.0.self_attn.q_proj.weight",
+            "layers.0.self_attn.q_proj.weight",
+        ),
+        "layer0_mlp_gate": (
+            "model.layers.0.mlp.gate_proj.weight",
+            "model.language_model.model.layers.0.mlp.gate_proj.weight",
+            "layers.0.mlp.gate_proj.weight",
+        ),
+    }
+    name_to_param = {name: param for name, param in params if param.is_floating_point()}
+    resolved: dict[str, str] = {}
+    for probe_label, candidates in probe_candidates.items():
+        for suffix in candidates:
+            matched_name = next((name for name in name_to_param if name.endswith(suffix)), None)
+            if matched_name is not None:
+                resolved[probe_label] = matched_name
+                break
+    return resolved
+
+
+def _compute_probe_delta_summary(
+    probe_param_names: dict[str, str],
+    params_by_name: dict[str, torch.nn.Parameter],
+    base_tensors: dict[str, torch.Tensor],
+) -> str:
+    if not probe_param_names:
+        return "none"
+    parts = []
+    for probe_label, name in probe_param_names.items():
+        param = params_by_name[name]
+        local_tensor = get_local_tensor(param).detach()
+        delta = (local_tensor - base_tensors[name]).float()
+        delta_l2 = float(torch.sqrt(torch.clamp(delta.pow(2).sum(), min=0.0)).item())
+        delta_max = float(delta.abs().max().item())
+        parts.append(f"{probe_label}={name} delta_l2={delta_l2:.8e} delta_max={delta_max:.8e}")
+    return " | ".join(parts)
 
 
 def _prepare_examples(config: LandscapeConfig):
@@ -354,16 +404,28 @@ async def run_sweep(
                 logger=logger,
             )
 
+        params_by_name = {name: param for name, param in params if param.is_floating_point()}
+        probe_param_names = _resolve_probe_param_names(params)
+        if probe_param_names:
+            logger.info(
+                "Enabled parameter probes for perturbation diagnostics: "
+                + ", ".join(f"{label}={name}" for label, name in probe_param_names.items())
+            )
+        else:
+            logger.warning("No parameter probes matched model parameter names; only global delta stats will be logged")
+
         for point in sweep_points:
             with torch.no_grad():
                 apply_point(params, base_tensors, delta_direction, eta_direction, point.alpha, point.beta)
                 # Ensure FSDP modules rebuild full params from the updated shards on the next forward.
                 reshard_module(model)
                 delta_l2_norm, delta_max_abs = compute_parameter_delta_stats(params, base_tensors)
+                probe_delta_summary = _compute_probe_delta_summary(probe_param_names, params_by_name, base_tensors)
             logger.debug(
                 f"Applied perturbation alpha={point.alpha:.6f} beta={point.beta:.6f} "
                 f"||theta-theta0||={delta_l2_norm:.8e} max_abs_delta={delta_max_abs:.8e}"
             )
+            logger.debug(f"Perturbation probe deltas: {probe_delta_summary}")
 
             point_start = time.perf_counter()
             row = {
