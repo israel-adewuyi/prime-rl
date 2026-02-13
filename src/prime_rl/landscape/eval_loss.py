@@ -37,6 +37,7 @@ def compute_eval_loss(
     loss_config,
     parallel_dims,
     device: torch.device,
+    eval_tag: str | None = None,
 ) -> float:
     def _mean_or_zero(tensor: torch.Tensor) -> float:
         if tensor.numel() == 0:
@@ -119,6 +120,19 @@ def compute_eval_loss(
             out["entropy"] = shift_tensor_right(
                 out["entropy"], pad_value=torch.log(torch.tensor(float(vocab_size))).item()
             )
+            if idx == 1:
+                tag_prefix = f"[{eval_tag}] " if eval_tag else ""
+                trainer_logprobs_sum = float(out["logprobs"].float().sum().item())
+                trainer_logprobs_mean = float(out["logprobs"].float().mean().item())
+                inference_logprobs_sum = float(inference_logprobs.float().sum().item())
+                inference_logprobs_mean = float(inference_logprobs.float().mean().item())
+                logger.debug(
+                    f"{tag_prefix}Eval fingerprint micro-batch {idx}/{total_micro_batches}: "
+                    f"trainer_logprobs_sum={trainer_logprobs_sum:.8e} "
+                    f"trainer_logprobs_mean={trainer_logprobs_mean:.8e} "
+                    f"inference_logprobs_sum={inference_logprobs_sum:.8e} "
+                    f"inference_logprobs_mean={inference_logprobs_mean:.8e}"
+                )
 
             response_lengths = get_response_lengths(position_ids)
             loss, loss_tensors = compute_loss(

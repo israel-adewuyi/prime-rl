@@ -19,28 +19,45 @@ def iter_named_parameters(model: torch.nn.Module, param_filter: str) -> list[tup
     return params
 
 
-def _check_single_device(params: Iterable[torch.nn.Parameter]) -> torch.device:
+def _check_single_device(params: Iterable[torch.nn.Parameter | torch.Tensor]) -> torch.device:
     device = None
     for param in params:
+        local_param = get_local_tensor(param)
         if device is None:
-            device = param.device
-        elif param.device != device:
+            device = local_param.device
+        elif local_param.device != device:
             raise ValueError("All parameters must be on the same device for landscape perturbations")
     assert device is not None
     return device
 
 
-def get_local_tensor(param: torch.nn.Parameter) -> torch.Tensor:
-    if isinstance(param, DTensor):
-        if hasattr(param, "to_local"):
-            return param.to_local()
-        return param._local_tensor
+def _unwrap_param_tensor(param: torch.nn.Parameter | torch.Tensor) -> torch.Tensor:
+    if isinstance(param, torch.nn.Parameter):
+        return param.data
     return param
+
+
+def _is_dtensor_param(param: torch.nn.Parameter | torch.Tensor) -> bool:
+    return isinstance(_unwrap_param_tensor(param), DTensor)
+
+
+def get_local_tensor(param: torch.nn.Parameter | torch.Tensor) -> torch.Tensor:
+    tensor = _unwrap_param_tensor(param)
+    if isinstance(tensor, DTensor):
+        if hasattr(tensor, "to_local"):
+            return tensor.to_local()
+        return tensor._local_tensor
+    return tensor
 
 
 def _maybe_all_reduce(tensor: torch.Tensor) -> None:
     if dist.is_initialized() and dist.get_world_size() > 1:
         dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+
+
+def _maybe_all_reduce_max(tensor: torch.Tensor) -> None:
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        dist.all_reduce(tensor, op=dist.ReduceOp.MAX)
 
 
 def build_random_direction(
@@ -106,10 +123,32 @@ def apply_point(
         delta = delta_direction[name]
         eta = eta_direction[name]
         updated = base_tensor + alpha * delta + beta * eta
-        updated = updated.to(device=base_tensor.device, dtype=base_tensor.dtype)
-        if isinstance(param, DTensor):
-            updated = DTensor.from_local(updated, param.device_mesh, param.placements)
-        param.data.copy_(updated)
+        local_tensor = get_local_tensor(param)
+        updated = updated.to(device=local_tensor.device, dtype=local_tensor.dtype)
+        target_tensor = _unwrap_param_tensor(param)
+        if isinstance(target_tensor, DTensor):
+            updated = DTensor.from_local(updated, target_tensor.device_mesh, target_tensor.placements)
+        target_tensor.copy_(updated)
+
+
+def compute_parameter_delta_stats(
+    params: list[tuple[str, torch.nn.Parameter]],
+    base_tensors: dict[str, torch.Tensor],
+) -> tuple[float, float]:
+    device = _check_single_device(get_local_tensor(param) for _, param in params)
+    total_delta_sq = torch.tensor(0.0, device=device)
+    max_abs_delta = torch.tensor(0.0, device=device)
+    for name, param in params:
+        if not param.is_floating_point():
+            continue
+        local_tensor = get_local_tensor(param).detach()
+        delta = (local_tensor - base_tensors[name]).float()
+        total_delta_sq = total_delta_sq + delta.pow(2).sum()
+        max_abs_delta = torch.maximum(max_abs_delta, delta.abs().max())
+    _maybe_all_reduce(total_delta_sq)
+    _maybe_all_reduce_max(max_abs_delta)
+    l2_norm = torch.sqrt(torch.clamp(total_delta_sq, min=0.0)).item()
+    return float(l2_norm), float(max_abs_delta.item())
 
 
 def load_direction_state_dict(path: str) -> dict[str, torch.Tensor]:
@@ -194,7 +233,7 @@ def prepare_direction_tensors(
             )
         local_tensor = get_local_tensor(param)
         if tensor.shape != local_tensor.shape:
-            if isinstance(param, DTensor) and tensor.shape == param.shape:
+            if _is_dtensor_param(param) and tensor.shape == param.shape:
                 if dist.is_initialized() and dist.get_world_size() > 1:
                     raise ValueError(
                         f"Direction tensor for {name} has global shape {tensor.shape}, "

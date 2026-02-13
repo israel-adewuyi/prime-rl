@@ -7,7 +7,7 @@ import verifiers as vf
 from transformers import AutoProcessor
 
 from prime_rl.landscape.config import LandscapeConfig
-from prime_rl.landscape.directions import apply_point
+from prime_rl.landscape.directions import apply_point, compute_parameter_delta_stats
 from prime_rl.landscape.eval_loss import compute_eval_loss, micro_batch_to_tensor
 from prime_rl.landscape.io import append_result
 from prime_rl.landscape.weights import write_weights
@@ -355,6 +355,11 @@ async def run_sweep(
         for point in sweep_points:
             with torch.no_grad():
                 apply_point(params, base_tensors, delta_direction, eta_direction, point.alpha, point.beta)
+                delta_l2_norm, delta_max_abs = compute_parameter_delta_stats(params, base_tensors)
+            logger.debug(
+                f"Applied perturbation alpha={point.alpha:.6f} beta={point.beta:.6f} "
+                f"||theta-theta0||={delta_l2_norm:.8e} max_abs_delta={delta_max_abs:.8e}"
+            )
 
             point_start = time.perf_counter()
             row = {
@@ -384,6 +389,7 @@ async def run_sweep(
                     config.trainer.loss,
                     parallel_dims,
                     compute_device,
+                    eval_tag=f"alpha={point.alpha:.6f},beta={point.beta:.6f}",
                 )
                 row["elapsed_loss_s"] = time.perf_counter() - loss_start
 
