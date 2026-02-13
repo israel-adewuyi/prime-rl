@@ -62,10 +62,6 @@ class DirectionConfig(BaseConfig):
         str,
         Field(description="Suffix appended to generated direction filenames."),
     ] = "orth"
-    zero_skipped_tensors: Annotated[
-        bool,
-        Field(description="If true, set non-normalized tensors (e.g. 1D weights/biases) to zero in generated directions."),
-    ] = True
     collinear_threshold: Annotated[
         float,
         Field(
@@ -160,27 +156,25 @@ class LandscapeConfig(BaseSettings):
         self.inference.model.name = self.trainer.model.name
         if self.trainer.weight_broadcast.type != "filesystem":
             raise ValueError("landscape requires trainer.weight_broadcast.type='filesystem'")
-        if self.trainer.model.lora is not None and self.orchestrator.model.lora is None:
-            raise ValueError("trainer.model.lora is set but orchestrator.model.lora is not")
-        if self.trainer.model.lora is not None and self.orchestrator.model.lora is not None:
-            trainer_name = self.trainer.model.lora.name
-            orchestrator_name = self.orchestrator.model.lora.name
-            if trainer_name and orchestrator_name and trainer_name != orchestrator_name:
-                raise ValueError(
-                    f"trainer.model.lora.name ({trainer_name}) must match orchestrator.model.lora.name ({orchestrator_name})"
-                )
-            if not self.inference.enable_lora:
-                self.inference.enable_lora = True
-            if self.inference.max_lora_rank is None:
-                self.inference.max_lora_rank = self.trainer.model.lora.rank
+
+        if self.trainer.model.lora is not None or self.orchestrator.model.lora is not None:
+            raise ValueError(
+                "landscape does not support LoRA; set trainer.model.lora and orchestrator.model.lora to None"
+            )
+
+        if self.orchestrator.teacher_model is not None:
+            raise ValueError("landscape does not support orchestrator.teacher_model")
+
+        if self.inference.enable_lora:
+            raise ValueError("landscape does not support inference.enable_lora")
+
         return self
 
     @model_validator(mode="after")
     def auto_setup_inference_dp(self):
-        if self.inference is not None:
-            tp = self.inference.parallel.tp
-            if len(self.inference_gpu_ids) != self.inference.parallel.dp * tp:
-                if len(self.inference_gpu_ids) % tp != 0:
-                    raise ValueError("Number of inference GPUs must be divisible by inference.parallel.tp")
-                self.inference.parallel.dp = len(self.inference_gpu_ids) // tp
+        tp = self.inference.parallel.tp
+        if len(self.inference_gpu_ids) != self.inference.parallel.dp * tp:
+            if len(self.inference_gpu_ids) % tp != 0:
+                raise ValueError("Number of inference GPUs must be divisible by inference.parallel.tp")
+            self.inference.parallel.dp = len(self.inference_gpu_ids) // tp
         return self
