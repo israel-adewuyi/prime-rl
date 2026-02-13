@@ -177,7 +177,7 @@ def _log_lm_head_health(model: nn.Module, stage: str, enforce_nonzero: bool = Fa
     else:
         message_parts.append("embed_tokens.weight unavailable")
 
-    logger.info(" ".join(message_parts))
+    logger.debug(" ".join(message_parts))
 
     if enforce_nonzero and lm_count > 0 and lm_norm < 1e-12:
         raise ValueError(
@@ -193,7 +193,7 @@ def _restore_tied_lm_head_after_load(model: nn.Module) -> None:
     logger = get_logger()
     if hasattr(model, "tie_weights"):
         model.tie_weights()
-        logger.info("Re-applied model.tie_weights() after checkpoint load (tie_word_embeddings=True)")
+        logger.debug("Re-applied model.tie_weights() after checkpoint load (tie_word_embeddings=True)")
 
     lm_head_weight, embed_weight = _get_lm_head_and_embed_weights(model)
     if lm_head_weight is None or embed_weight is None:
@@ -208,7 +208,7 @@ def _restore_tied_lm_head_after_load(model: nn.Module) -> None:
 
     with torch.no_grad():
         lm_local.copy_(embed_local)
-    logger.info("Copied embed_tokens.weight into lm_head.weight after checkpoint load")
+    logger.debug("Copied embed_tokens.weight into lm_head.weight after checkpoint load")
 
 
 def get_load_balance_stats(
