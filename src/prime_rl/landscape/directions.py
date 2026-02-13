@@ -125,10 +125,11 @@ def apply_point(
         updated = base_tensor + alpha * delta + beta * eta
         local_tensor = get_local_tensor(param)
         updated = updated.to(device=local_tensor.device, dtype=local_tensor.dtype)
-        target_tensor = _unwrap_param_tensor(param)
-        if isinstance(target_tensor, DTensor):
+        if _is_dtensor_param(param):
+            target_tensor = _unwrap_param_tensor(param)
             updated = DTensor.from_local(updated, target_tensor.device_mesh, target_tensor.placements)
-        target_tensor.copy_(updated)
+        with torch.no_grad():
+            param.copy_(updated)
 
 
 def compute_parameter_delta_stats(

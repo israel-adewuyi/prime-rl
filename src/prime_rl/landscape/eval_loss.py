@@ -126,12 +126,18 @@ def compute_eval_loss(
                 trainer_logprobs_mean = float(out["logprobs"].float().mean().item())
                 inference_logprobs_sum = float(inference_logprobs.float().sum().item())
                 inference_logprobs_mean = float(inference_logprobs.float().mean().item())
+                temperature_min = float(temperatures.float().min().item())
+                temperature_mean = float(temperatures.float().mean().item())
+                temperature_max = float(temperatures.float().max().item())
                 logger.debug(
                     f"{tag_prefix}Eval fingerprint micro-batch {idx}/{total_micro_batches}: "
                     f"trainer_logprobs_sum={trainer_logprobs_sum:.8e} "
                     f"trainer_logprobs_mean={trainer_logprobs_mean:.8e} "
                     f"inference_logprobs_sum={inference_logprobs_sum:.8e} "
-                    f"inference_logprobs_mean={inference_logprobs_mean:.8e}"
+                    f"inference_logprobs_mean={inference_logprobs_mean:.8e} "
+                    f"temperature_min={temperature_min:.8e} "
+                    f"temperature_mean={temperature_mean:.8e} "
+                    f"temperature_max={temperature_max:.8e}"
                 )
 
             response_lengths = get_response_lengths(position_ids)
