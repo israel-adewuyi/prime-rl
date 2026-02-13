@@ -79,6 +79,18 @@ def main() -> None:
     try:
         _configure_trainer_cuda_visible_devices(config, logger_obj)
 
+        if config.trainer.model.compile is not None:
+            logger_obj.warning(
+                "Disabling trainer.model.compile for landscape evaluation to ensure perturbations are visible in forward."
+            )
+            config.trainer.model.compile = None
+
+        if config.trainer.model.fused_lm_head_chunk_size != "disabled":
+            logger_obj.warning(
+                "Disabling fused LM head for landscape evaluation to use explicit logits->logprobs computation."
+            )
+            config.trainer.model.fused_lm_head_chunk_size = "disabled"
+
         if config.start_inference:
             inference_file = get_temp_toml_file()
             with open(inference_file, "wb") as f:
@@ -106,6 +118,16 @@ def main() -> None:
         logger_obj.info(f"Model tie_word_embeddings={tie_word_embeddings}")
 
         params = iter_named_parameters(model, config.sweep.direction.param_filter)
+        num_floating_params = sum(1 for _, param in params if param.is_floating_point())
+        num_total_elements = sum(
+            get_local_tensor(param).numel() for _, param in params if param.is_floating_point()
+        )
+        logger_obj.info(
+            "Selected perturbation parameters: "
+            f"filter={config.sweep.direction.param_filter} "
+            f"num_named={len(params)} num_floating={num_floating_params} "
+            f"local_numel={num_total_elements}"
+        )
         compute_device = _resolve_compute_device(params)
         logger_obj.info(f"Landscape loss compute device: {compute_device}")
         base_tensors = {

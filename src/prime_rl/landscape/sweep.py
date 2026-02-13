@@ -16,6 +16,7 @@ from prime_rl.orchestrator.buffer import Buffer
 from prime_rl.orchestrator.trajectories import branch_rollout, build_vlm_image_cache, interleave_rollout
 from prime_rl.orchestrator.utils import get_sampling_args, set_semaphore
 from prime_rl.trainer.batch import prepare_batch
+from prime_rl.trainer.model import reshard_module
 from prime_rl.utils.client import setup_inference_pool
 from prime_rl.utils.temp_scheduling import compute_temperature
 from prime_rl.utils.utils import get_env_ids_to_install, install_env
@@ -337,6 +338,7 @@ async def run_sweep(
         if run_loss_fixed_batch:
             with torch.no_grad():
                 apply_point(params, base_tensors, delta_direction, eta_direction, 0.0, 0.0)
+                reshard_module(model)
             fixed_old_batch = await _collect_fixed_old_policy_batch(
                 config=config,
                 model=model,
@@ -355,6 +357,8 @@ async def run_sweep(
         for point in sweep_points:
             with torch.no_grad():
                 apply_point(params, base_tensors, delta_direction, eta_direction, point.alpha, point.beta)
+                # Ensure FSDP modules rebuild full params from the updated shards on the next forward.
+                reshard_module(model)
                 delta_l2_norm, delta_max_abs = compute_parameter_delta_stats(params, base_tensors)
             logger.debug(
                 f"Applied perturbation alpha={point.alpha:.6f} beta={point.beta:.6f} "

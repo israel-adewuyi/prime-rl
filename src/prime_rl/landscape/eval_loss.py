@@ -5,9 +5,7 @@ from loguru import logger
 
 from prime_rl.trainer.model import forward
 from prime_rl.trainer.rl.loss import (
-    compute_entropy,
     compute_loss,
-    selective_log_softmax,
     shift_tensor_left,
     shift_tensor_right,
 )
@@ -39,10 +37,43 @@ def compute_eval_loss(
     device: torch.device,
     eval_tag: str | None = None,
 ) -> float:
+    def _selective_log_softmax_eager(logits: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
+        logprobs = logits.log_softmax(dim=-1)
+        return torch.gather(logprobs, dim=-1, index=index.unsqueeze(-1)).squeeze(-1)
+
+    def _compute_entropy_eager(shifted_logits: torch.Tensor) -> torch.Tensor:
+        pd = torch.nn.functional.softmax(shifted_logits, dim=-1)
+        return torch.logsumexp(shifted_logits, dim=-1) - torch.sum(pd * shifted_logits, dim=-1)
+
     def _mean_or_zero(tensor: torch.Tensor) -> float:
         if tensor.numel() == 0:
             return 0.0
         return float(tensor.float().mean().item())
+
+    def _model_param_canary() -> tuple[float, float, int]:
+        canary_sum = torch.tensor(0.0, device=device)
+        canary_sq_sum = torch.tensor(0.0, device=device)
+        sampled = 0
+        target_samples = 4096
+        for param in model.parameters():
+            if not param.is_floating_point():
+                continue
+            tensor = param.data
+            if hasattr(tensor, "to_local"):
+                tensor = tensor.to_local()
+            if tensor.numel() == 0:
+                continue
+            flat = tensor.detach().float().reshape(-1)
+            take = min(flat.numel(), target_samples - sampled)
+            if take <= 0:
+                break
+            sample = flat[:take]
+            canary_sum += sample.sum()
+            canary_sq_sum += sample.pow(2).sum()
+            sampled += take
+            if sampled >= target_samples:
+                break
+        return float(canary_sum.item()), float(canary_sq_sum.item()), sampled
 
     if loss_config.ratio_type == "token":
         loss_scale = sum(micro_batch["loss_mask"].sum().item() for micro_batch in micro_batches)
@@ -103,8 +134,9 @@ def compute_eval_loss(
             if out.get("logprobs") is None:
                 logits = out["logits"]
                 scaled_logits = logits / temperatures.unsqueeze(-1)
-                out["logprobs"] = selective_log_softmax(scaled_logits, labels)
-                out["entropy"] = compute_entropy(scaled_logits)
+                # Use eager kernels in landscape eval to avoid stale compiled graph artifacts.
+                out["logprobs"] = _selective_log_softmax_eager(scaled_logits, labels)
+                out["entropy"] = _compute_entropy_eager(scaled_logits)
 
             if cp_enabled:
                 logprobs = dist_nn.all_gather(out["logprobs"], group=cp_group)
@@ -129,6 +161,7 @@ def compute_eval_loss(
                 temperature_min = float(temperatures.float().min().item())
                 temperature_mean = float(temperatures.float().mean().item())
                 temperature_max = float(temperatures.float().max().item())
+                param_canary_sum, param_canary_sq_sum, param_canary_count = _model_param_canary()
                 logger.debug(
                     f"{tag_prefix}Eval fingerprint micro-batch {idx}/{total_micro_batches}: "
                     f"trainer_logprobs_sum={trainer_logprobs_sum:.8e} "
@@ -137,7 +170,10 @@ def compute_eval_loss(
                     f"inference_logprobs_mean={inference_logprobs_mean:.8e} "
                     f"temperature_min={temperature_min:.8e} "
                     f"temperature_mean={temperature_mean:.8e} "
-                    f"temperature_max={temperature_max:.8e}"
+                    f"temperature_max={temperature_max:.8e} "
+                    f"param_canary_sum={param_canary_sum:.8e} "
+                    f"param_canary_sq_sum={param_canary_sq_sum:.8e} "
+                    f"param_canary_count={param_canary_count}"
                 )
 
             response_lengths = get_response_lengths(position_ids)
