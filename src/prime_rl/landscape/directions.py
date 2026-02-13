@@ -77,7 +77,7 @@ def build_random_direction(
         if not param.is_floating_point():
             continue
         base_tensor = base_tensors[name]
-        raw_dir = torch.randn_like(base_tensor, generator=generator)
+        raw_dir = torch.randn_like(base_tensor)
         raw[name] = raw_dir
         if norm == "global":
             total_param_sq = total_param_sq + base_tensor.float().pow(2).sum()
@@ -210,7 +210,9 @@ def prepare_direction_tensors(
     direction_keys = set(direction_state.keys())
     extras = sorted(direction_keys - selected_name_set)
     if extras:
-        logger_obj.info(f"{direction_name} has {len(extras)} extra keys not in selected parameters; they will be ignored")
+        logger_obj.info(
+            f"{direction_name} has {len(extras)} extra keys not in selected parameters; they will be ignored"
+        )
         logger_obj.debug(f"{direction_name} extra keys: {extras}")
 
     direction = {}
@@ -285,7 +287,9 @@ def log_direction_stats(
         eta_direction=eta_direction,
         epsilon=epsilon,
     )
-    logger_obj.info(f"{label}: ||delta||={delta_norm:.8e}, ||eta||={eta_norm:.8e}, dot={dot:.8e}, cos(theta)={cosine:.8e}")
+    logger_obj.info(
+        f"{label}: ||delta||={delta_norm:.8e}, ||eta||={eta_norm:.8e}, dot={dot:.8e}, cos(theta)={cosine:.8e}"
+    )
 
 
 def orthogonalize_and_normalize_directions(
@@ -378,7 +382,9 @@ def _infer_config_stem_from_argv() -> str:
     return "landscape"
 
 
-def build_orthogonalized_direction_paths(output_dir: Path, orthogonalized_subdir: Path, orthogonalized_suffix: str) -> tuple[Path, Path]:
+def build_orthogonalized_direction_paths(
+    output_dir: Path, orthogonalized_subdir: Path, orthogonalized_suffix: str
+) -> tuple[Path, Path]:
     config_stem = _infer_config_stem_from_argv()
     suffix = orthogonalized_suffix.strip()
     suffix_part = f"_{suffix}" if suffix else ""
