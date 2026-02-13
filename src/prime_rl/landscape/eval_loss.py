@@ -122,40 +122,22 @@ def compute_eval_loss(
 
             vocab_size = getattr(model.config, "vocab_size", None) or model.config.text_config.vocab_size
             pad_logprob_value = float(torch.log(torch.tensor(1.0 / vocab_size)).item())
-            out["logprobs"] = shift_tensor_right(
-                out["logprobs"], pad_value=pad_logprob_value
-            )
+            out["logprobs"] = shift_tensor_right(out["logprobs"], pad_value=pad_logprob_value)
             out["entropy"] = shift_tensor_right(
                 out["entropy"], pad_value=torch.log(torch.tensor(float(vocab_size))).item()
             )
             response_lengths = get_response_lengths(position_ids)
             if idx == 1:
                 tag_prefix = f"[{eval_tag}] " if eval_tag else ""
-                trainer_logprobs_mean = float(out["logprobs"].float().mean().item())
                 trainer_logprobs_std = float(out["logprobs"].float().std(unbiased=False).item())
-                inference_logprobs_mean = float(inference_logprobs.float().mean().item())
-                inference_logprobs_std = float(inference_logprobs.float().std(unbiased=False).item())
-                temperature_min = float(temperatures.float().min().item())
-                temperature_mean = float(temperatures.float().mean().item())
-                temperature_max = float(temperatures.float().max().item())
                 logits_sample_std = float("nan")
                 has_logits = out.get("logits") is not None
                 if has_logits:
                     logits_sample_std = float(out["logits"].float().std(unbiased=False).item())
-                pad_like_frac = float((out["logprobs"].float() - pad_logprob_value).abs().lt(1e-5).float().mean().item())
-                logger.debug(
-                    f"{tag_prefix}Eval fingerprint micro-batch {idx}/{total_micro_batches}: "
-                    f"trainer_logprobs_mean={trainer_logprobs_mean:.8e} "
-                    f"trainer_logprobs_std={trainer_logprobs_std:.8e} "
-                    f"inference_logprobs_mean={inference_logprobs_mean:.8e} "
-                    f"inference_logprobs_std={inference_logprobs_std:.8e} "
-                    f"has_logits={has_logits} "
-                    f"logits_sample_std={logits_sample_std:.8e} "
-                    f"pad_like_frac={pad_like_frac:.8e} "
-                    f"temperature_min={temperature_min:.8e} "
-                    f"temperature_mean={temperature_mean:.8e} "
-                    f"temperature_max={temperature_max:.8e}"
+                pad_like_frac = float(
+                    (out["logprobs"].float() - pad_logprob_value).abs().lt(1e-5).float().mean().item()
                 )
+
                 if has_logits and logits_sample_std < 1e-8:
                     raise RuntimeError(
                         f"{tag_prefix}Degenerate trainer logits detected in landscape eval: "
@@ -179,24 +161,8 @@ def compute_eval_loss(
                 loss_config=loss_config,
                 loss_scale=loss_scale,
             )
-            num_masked_tokens = int(loss_tensors["is_masked"].sum().item()) if loss_tensors["is_masked"].numel() else 0
-            num_loss_tokens = int(loss_tensors["is_masked"].numel())
-            num_kept_tokens = max(num_loss_tokens - num_masked_tokens, 0)
-            logger.debug(
-                f"Loss diagnostics micro-batch {idx}/{total_micro_batches}: "
-                f"loss_tokens={num_loss_tokens} kept_tokens={num_kept_tokens} "
-                f"masked_frac={_mean_or_zero(loss_tensors['is_masked']):.6f} "
-                f"token_low_frac={_mean_or_zero(loss_tensors['is_masked_low']):.6f} "
-                f"token_high_frac={_mean_or_zero(loss_tensors['is_masked_high']):.6f} "
-                f"seq_low_frac={_mean_or_zero(loss_tensors['sequence_masked_low']):.6f} "
-                f"seq_high_frac={_mean_or_zero(loss_tensors['sequence_masked_high']):.6f} "
-                f"geo_low_frac={_mean_or_zero(loss_tensors['geo_masked_low']):.6f} "
-                f"geo_high_frac={_mean_or_zero(loss_tensors['geo_masked_high']):.6f} "
-                f"mismatch_kl={_mean_or_zero(loss_tensors['mismatch_kl']):.6e} "
-                f"geo_seq_ratio={_mean_or_zero(loss_tensors['geo_seq_ratio']):.6e}"
-            )
             losses.append(loss.detach().float().cpu().item())
 
-    mean_loss = float(sum(losses) / max(len(losses), 1))
-    logger.debug(f"Loss over {total_micro_batches} micro-batches: {mean_loss:.6f}")
-    return mean_loss
+    sum_loss = float(sum(losses))  # we already normalize in compute_loss
+    logger.debug(f"Sum of avg loss over {total_micro_batches} micro-batches: {sum_loss:.7f}")
+    return sum_loss
