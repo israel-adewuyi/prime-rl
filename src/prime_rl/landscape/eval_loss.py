@@ -36,6 +36,7 @@ def compute_eval_loss(
     micro_batches: list[dict],
     loss_config,
     parallel_dims,
+    device: torch.device,
 ) -> float:
     if loss_config.ratio_type == "token":
         loss_scale = sum(micro_batch["loss_mask"].sum().item() for micro_batch in micro_batches)
@@ -53,15 +54,17 @@ def compute_eval_loss(
     with torch.no_grad():
         for idx, micro_batch in enumerate(micro_batches, start=1):
             logger.debug(f"Loss micro-batch {idx}/{total_micro_batches}")
-            input_ids = micro_batch["input_ids"].to("cuda")
-            position_ids = micro_batch["position_ids"].to("cuda")
-            advantages = micro_batch["advantages"].to("cuda")
-            loss_mask = micro_batch["loss_mask"].to("cuda")
-            inference_logprobs = micro_batch["inference_logprobs"].to("cuda")
+            input_ids = micro_batch["input_ids"].to(device)
+            position_ids = micro_batch["position_ids"].to(device)
+            advantages = micro_batch["advantages"].to(device)
+            loss_mask = micro_batch["loss_mask"].to(device)
+            inference_logprobs = micro_batch["inference_logprobs"].to(device)
 
-            pixel_values = micro_batch["pixel_values"].to("cuda") if micro_batch.get("pixel_values") is not None else None
+            pixel_values = (
+                micro_batch["pixel_values"].to(device) if micro_batch.get("pixel_values") is not None else None
+            )
             image_grid_thw = (
-                micro_batch["image_grid_thw"].to("cuda") if micro_batch.get("image_grid_thw") is not None else None
+                micro_batch["image_grid_thw"].to(device) if micro_batch.get("image_grid_thw") is not None else None
             )
             labels = shift_tensor_left(input_ids)
             if cp_enabled and pixel_values is not None:
@@ -75,7 +78,7 @@ def compute_eval_loss(
             else:
                 forward_position_ids = position_ids
 
-            temperatures = micro_batch["temperatures"].to("cuda")
+            temperatures = micro_batch["temperatures"].to(device)
             if cp_enabled:
                 from prime_rl.utils.cp import shard_for_cp
 

@@ -153,6 +153,15 @@ class LandscapeConfig(BaseSettings):
         list[int],
         Field(description="GPU IDs to use for the inference server."),
     ] = [0]
+    trainer_gpu_ids: Annotated[
+        list[int],
+        Field(
+            description=(
+                "GPU IDs visible to the landscape trainer/loss process. "
+                "Used to control where model forward/loss evaluation runs."
+            )
+        ),
+    ] = [0]
 
     @model_validator(mode="after")
     def validate_shared_model(self):
@@ -188,4 +197,14 @@ class LandscapeConfig(BaseSettings):
             if len(self.inference_gpu_ids) % tp != 0:
                 raise ValueError("Number of inference GPUs must be divisible by inference.parallel.tp")
             self.inference.parallel.dp = len(self.inference_gpu_ids) // tp
+        return self
+
+    @model_validator(mode="after")
+    def validate_trainer_gpu_ids(self):
+        if not self.trainer_gpu_ids:
+            raise ValueError("trainer_gpu_ids must not be empty")
+        if len(set(self.trainer_gpu_ids)) != len(self.trainer_gpu_ids):
+            raise ValueError("trainer_gpu_ids must not contain duplicates")
+        if any(gpu_id < 0 for gpu_id in self.trainer_gpu_ids):
+            raise ValueError("trainer_gpu_ids must be non-negative")
         return self

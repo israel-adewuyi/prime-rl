@@ -274,6 +274,7 @@ async def run_sweep(
     parallel_dims,
     delta_direction: dict[str, torch.Tensor],
     eta_direction: dict[str, torch.Tensor],
+    compute_device: torch.device,
     logger,
 ) -> None:
     logger.info(
@@ -366,6 +367,7 @@ async def run_sweep(
                     fixed_old_batch.micro_batches,
                     config.trainer.loss,
                     parallel_dims,
+                    compute_device,
                 )
                 row["elapsed_loss_s"] = time.perf_counter() - loss_start
 

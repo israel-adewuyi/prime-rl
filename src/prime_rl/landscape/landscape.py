@@ -31,6 +31,35 @@ from prime_rl.utils.pydantic_config import get_temp_toml_file, parse_argv
 from prime_rl.utils.utils import get_log_dir
 
 
+def _configure_trainer_cuda_visible_devices(config: LandscapeConfig, logger_obj) -> None:
+    visible_devices = ",".join(map(str, config.trainer_gpu_ids))
+    os.environ["CUDA_VISIBLE_DEVICES"] = visible_devices
+
+    local_world_size_env = os.environ.get("LOCAL_WORLD_SIZE")
+    if local_world_size_env is not None and int(local_world_size_env) != len(config.trainer_gpu_ids):
+        raise ValueError(
+            f"LOCAL_WORLD_SIZE={local_world_size_env} but trainer_gpu_ids has {len(config.trainer_gpu_ids)} entries. "
+            "When using torchrun, set trainer_gpu_ids length to match LOCAL_WORLD_SIZE."
+        )
+
+    local_rank_env = os.environ.get("LOCAL_RANK")
+    if local_rank_env is not None and int(local_rank_env) >= len(config.trainer_gpu_ids):
+        raise ValueError(
+            f"LOCAL_RANK={local_rank_env} is out of range for trainer_gpu_ids length {len(config.trainer_gpu_ids)}"
+        )
+
+    logger_obj.info(f"Configured trainer visible GPU(s): {visible_devices}")
+
+
+def _resolve_compute_device(params: list[tuple[str, torch.nn.Parameter]]) -> torch.device:
+    for _, param in params:
+        if param.is_floating_point():
+            return get_local_tensor(param).device
+    if not params:
+        raise ValueError("No parameters selected for perturbation")
+    return get_local_tensor(params[0][1]).device
+
+
 def main() -> None:
     config = parse_argv(LandscapeConfig)
     output_dir = config.output_dir
@@ -48,6 +77,8 @@ def main() -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        _configure_trainer_cuda_visible_devices(config, logger_obj)
+
         if config.start_inference:
             inference_file = get_temp_toml_file()
             with open(inference_file, "wb") as f:
@@ -75,6 +106,8 @@ def main() -> None:
         logger_obj.info(f"Model tie_word_embeddings={tie_word_embeddings}")
 
         params = iter_named_parameters(model, config.sweep.direction.param_filter)
+        compute_device = _resolve_compute_device(params)
+        logger_obj.info(f"Landscape loss compute device: {compute_device}")
         base_tensors = {
             name: get_local_tensor(param).detach().clone() for name, param in params if param.is_floating_point()
         }
@@ -191,6 +224,7 @@ def main() -> None:
                 parallel_dims,
                 delta_direction,
                 eta_direction,
+                compute_device,
                 logger_obj,
             )
         )

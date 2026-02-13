@@ -58,7 +58,7 @@ class _Harness:
                 "elapsed_reward_s": 0.01,
             }
 
-        def fake_compute_eval_loss(_model, _micro_batches, _loss_config, _parallel_dims):
+        def fake_compute_eval_loss(_model, _micro_batches, _loss_config, _parallel_dims, _device):
             self.calls["loss"] += 1
             return 1.0 + self.calls["loss"]
 
@@ -114,6 +114,7 @@ class _Harness:
                 parallel_dims=SimpleNamespace(),
                 delta_direction={},
                 eta_direction={},
+                compute_device=torch.device("cpu"),
                 logger=_DummyLogger(),
             )
         )

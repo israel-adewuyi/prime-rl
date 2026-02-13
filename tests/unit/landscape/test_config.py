@@ -25,8 +25,19 @@ def test_landscape_rejects_inference_lora() -> None:
 def test_landscape_eval_mode_defaults_to_loss_fixed_batch() -> None:
     config = LandscapeConfig()
     assert config.sweep.eval_mode == "loss_fixed_batch"
+    assert config.trainer_gpu_ids == [0]
 
 
 def test_landscape_rejects_invalid_eval_mode() -> None:
     with pytest.raises(ValidationError):
         LandscapeConfig(sweep={"eval_mode": "invalid"})
+
+
+def test_landscape_rejects_empty_trainer_gpu_ids() -> None:
+    with pytest.raises(ValidationError, match="trainer_gpu_ids must not be empty"):
+        LandscapeConfig(trainer_gpu_ids=[])
+
+
+def test_landscape_rejects_duplicate_trainer_gpu_ids() -> None:
+    with pytest.raises(ValidationError, match="trainer_gpu_ids must not contain duplicates"):
+        LandscapeConfig(trainer_gpu_ids=[0, 0])
