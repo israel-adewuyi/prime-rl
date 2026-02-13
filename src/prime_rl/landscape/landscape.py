@@ -79,17 +79,11 @@ def main() -> None:
     try:
         _configure_trainer_cuda_visible_devices(config, logger_obj)
 
-        if config.trainer.model.compile is not None:
-            logger_obj.warning(
-                "Disabling trainer.model.compile for landscape evaluation to ensure perturbations are visible in forward."
-            )
-            config.trainer.model.compile = None
-
-        if config.trainer.model.fused_lm_head_chunk_size != "disabled":
-            logger_obj.warning(
-                "Disabling fused LM head for landscape evaluation to use explicit logits->logprobs computation."
-            )
-            config.trainer.model.fused_lm_head_chunk_size = "disabled"
+        logger_obj.info(f"Landscape using configured trainer.model.compile={config.trainer.model.compile}")
+        logger_obj.info(
+            "Landscape using configured "
+            f"trainer.model.fused_lm_head_chunk_size={config.trainer.model.fused_lm_head_chunk_size}"
+        )
 
         if config.start_inference:
             inference_file = get_temp_toml_file()
