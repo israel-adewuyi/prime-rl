@@ -38,6 +38,11 @@ def compute_eval_loss(
     parallel_dims,
     device: torch.device,
 ) -> float:
+    def _mean_or_zero(tensor: torch.Tensor) -> float:
+        if tensor.numel() == 0:
+            return 0.0
+        return float(tensor.float().mean().item())
+
     if loss_config.ratio_type == "token":
         loss_scale = sum(micro_batch["loss_mask"].sum().item() for micro_batch in micro_batches)
     else:
@@ -116,7 +121,7 @@ def compute_eval_loss(
             )
 
             response_lengths = get_response_lengths(position_ids)
-            loss, _ = compute_loss(
+            loss, loss_tensors = compute_loss(
                 trainer_logprobs=out["logprobs"].squeeze().split(response_lengths),
                 inference_logprobs=inference_logprobs.squeeze().split(response_lengths),
                 teacher_logprobs=None,
@@ -124,6 +129,22 @@ def compute_eval_loss(
                 loss_mask=loss_mask.squeeze().split(response_lengths),
                 loss_config=loss_config,
                 loss_scale=loss_scale,
+            )
+            num_masked_tokens = int(loss_tensors["is_masked"].sum().item()) if loss_tensors["is_masked"].numel() else 0
+            num_loss_tokens = int(loss_tensors["is_masked"].numel())
+            num_kept_tokens = max(num_loss_tokens - num_masked_tokens, 0)
+            logger.debug(
+                f"Loss diagnostics micro-batch {idx}/{total_micro_batches}: "
+                f"loss_tokens={num_loss_tokens} kept_tokens={num_kept_tokens} "
+                f"masked_frac={_mean_or_zero(loss_tensors['is_masked']):.6f} "
+                f"token_low_frac={_mean_or_zero(loss_tensors['is_masked_low']):.6f} "
+                f"token_high_frac={_mean_or_zero(loss_tensors['is_masked_high']):.6f} "
+                f"seq_low_frac={_mean_or_zero(loss_tensors['sequence_masked_low']):.6f} "
+                f"seq_high_frac={_mean_or_zero(loss_tensors['sequence_masked_high']):.6f} "
+                f"geo_low_frac={_mean_or_zero(loss_tensors['geo_masked_low']):.6f} "
+                f"geo_high_frac={_mean_or_zero(loss_tensors['geo_masked_high']):.6f} "
+                f"mismatch_kl={_mean_or_zero(loss_tensors['mismatch_kl']):.6e} "
+                f"geo_seq_ratio={_mean_or_zero(loss_tensors['geo_seq_ratio']):.6e}"
             )
             losses.append(loss.detach().float().cpu().item())
 
