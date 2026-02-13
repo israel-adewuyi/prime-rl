@@ -94,6 +94,123 @@ def get_language_model(model: nn.Module) -> nn.Module:
     return model.model
 
 
+def _to_local_tensor_if_needed(tensor: Tensor) -> Tensor:
+    if hasattr(tensor, "to_local"):
+        return tensor.to_local()
+    return tensor
+
+
+def _sampled_weight_stats(tensor: Tensor, max_elems: int = 65536) -> tuple[float, float, float, int]:
+    local = _to_local_tensor_if_needed(tensor).detach().float().reshape(-1)
+    take = min(local.numel(), max_elems)
+    if take == 0:
+        return 0.0, 0.0, 0.0, 0
+    sample = local[:take]
+    mean = float(sample.mean().item())
+    std = float(sample.std(unbiased=False).item())
+    norm = float(torch.sqrt(torch.clamp(sample.pow(2).sum(), min=0.0)).item())
+    return mean, std, norm, int(take)
+
+
+def _weights_share_storage(lhs: Tensor, rhs: Tensor) -> bool:
+    lhs_local = _to_local_tensor_if_needed(lhs)
+    rhs_local = _to_local_tensor_if_needed(rhs)
+    if lhs_local.numel() == 0 or rhs_local.numel() == 0:
+        return False
+    if lhs_local.device != rhs_local.device:
+        return False
+    return lhs_local.data_ptr() == rhs_local.data_ptr()
+
+
+def _sampled_max_abs_diff(lhs: Tensor, rhs: Tensor, max_elems: int = 65536) -> float:
+    lhs_local = _to_local_tensor_if_needed(lhs).detach().float().reshape(-1)
+    rhs_local = _to_local_tensor_if_needed(rhs).detach().float().reshape(-1)
+    if lhs_local.shape != rhs_local.shape:
+        return float("inf")
+    take = min(lhs_local.numel(), max_elems)
+    if take == 0:
+        return 0.0
+    return float((lhs_local[:take] - rhs_local[:take]).abs().max().item())
+
+
+def _get_lm_head_and_embed_weights(model: nn.Module) -> tuple[Tensor | None, Tensor | None]:
+    lm_head = getattr(model, "lm_head", None)
+    lm_head_weight = lm_head.weight if lm_head is not None and hasattr(lm_head, "weight") else None
+    language_model = get_language_model(model)
+    embed_tokens = getattr(language_model, "embed_tokens", None)
+    embed_weight = embed_tokens.weight if embed_tokens is not None and hasattr(embed_tokens, "weight") else None
+    return lm_head_weight, embed_weight
+
+
+def _log_lm_head_health(model: nn.Module, stage: str, enforce_nonzero: bool = False) -> None:
+    logger = get_logger()
+    tie_expected = bool(getattr(model.config, "tie_word_embeddings", False))
+    lm_head_weight, embed_weight = _get_lm_head_and_embed_weights(model)
+    if lm_head_weight is None:
+        logger.warning(f"LM head diagnostics [{stage}]: lm_head.weight is not available")
+        return
+
+    lm_mean, lm_std, lm_norm, lm_count = _sampled_weight_stats(lm_head_weight)
+    message_parts = [
+        f"LM head diagnostics [{stage}]:",
+        f"tie_word_embeddings={tie_expected}",
+        f"lm_sample_count={lm_count}",
+        f"lm_mean={lm_mean:.8e}",
+        f"lm_std={lm_std:.8e}",
+        f"lm_norm={lm_norm:.8e}",
+    ]
+
+    if embed_weight is not None:
+        embed_mean, embed_std, embed_norm, embed_count = _sampled_weight_stats(embed_weight)
+        tied_storage = _weights_share_storage(lm_head_weight, embed_weight)
+        sampled_max_abs_diff = _sampled_max_abs_diff(lm_head_weight, embed_weight)
+        message_parts.extend(
+            [
+                f"embed_sample_count={embed_count}",
+                f"embed_mean={embed_mean:.8e}",
+                f"embed_std={embed_std:.8e}",
+                f"embed_norm={embed_norm:.8e}",
+                f"tied_storage={tied_storage}",
+                f"sampled_max_abs_diff={sampled_max_abs_diff:.8e}",
+            ]
+        )
+    else:
+        message_parts.append("embed_tokens.weight unavailable")
+
+    logger.info(" ".join(message_parts))
+
+    if enforce_nonzero and lm_count > 0 and lm_norm < 1e-12:
+        raise ValueError(
+            f"LM head diagnostics [{stage}] detected near-zero lm_head.weight sample norm ({lm_norm:.8e}); "
+            "this indicates a broken LM head load/tie path."
+        )
+
+
+def _restore_tied_lm_head_after_load(model: nn.Module) -> None:
+    if not bool(getattr(model.config, "tie_word_embeddings", False)):
+        return
+
+    logger = get_logger()
+    if hasattr(model, "tie_weights"):
+        model.tie_weights()
+        logger.info("Re-applied model.tie_weights() after checkpoint load (tie_word_embeddings=True)")
+
+    lm_head_weight, embed_weight = _get_lm_head_and_embed_weights(model)
+    if lm_head_weight is None or embed_weight is None:
+        raise ValueError("tie_word_embeddings=True but lm_head.weight/embed_tokens.weight are unavailable")
+
+    lm_local = _to_local_tensor_if_needed(lm_head_weight)
+    embed_local = _to_local_tensor_if_needed(embed_weight)
+    if lm_local.shape != embed_local.shape:
+        raise ValueError(
+            f"Cannot restore tied lm_head from embeddings due to local shape mismatch: {lm_local.shape} vs {embed_local.shape}"
+        )
+
+    with torch.no_grad():
+        lm_local.copy_(embed_local)
+    logger.info("Copied embed_tokens.weight into lm_head.weight after checkpoint load")
+
+
 def get_load_balance_stats(
     model: nn.Module, reset_stats: bool = True, try_to_avoid_padding_experts: bool = True
 ) -> dict[str, Tensor | None]:
@@ -431,6 +548,8 @@ def load_dcp_from_hf(model: nn.Module, config: ModelConfig, parallel_dims: Paral
         storage_reader=HuggingFaceStorageReader(path=snapshot_path.as_posix()),
     )
     _init_buffers_post_meta()
+    _restore_tied_lm_head_after_load(model)
+    _log_lm_head_health(model, stage="post_dcp_load", enforce_nonzero=True)
 
     _move_buffers_to_cuda(model, config)
 
@@ -611,6 +730,9 @@ def setup_model(
         # - or load from HF with dcp
         else:
             load_dcp_from_hf(model, config, parallel_dims)
+
+    if not loading_from_checkpoint_later:
+        _log_lm_head_health(model, stage="setup_model_complete", enforce_nonzero=True)
 
     logger.debug(f"Model signature: {get_module_signature(model, compress=True)}")
     return model

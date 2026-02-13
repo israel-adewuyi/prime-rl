@@ -223,6 +223,19 @@ def compute_eval_loss(
                     f"param_canary_sq_sum={param_canary_sq_sum:.8e} "
                     f"param_canary_count={param_canary_count}"
                 )
+                if logits_sig_count > 0 and logits_sample_std < 1e-8:
+                    raise RuntimeError(
+                        f"{tag_prefix}Degenerate trainer logits detected in landscape eval: "
+                        f"logits_sample_std={logits_sample_std:.8e}, pad_like_frac={pad_like_frac:.8e}, "
+                        f"trainer_logprobs_std={trainer_logprobs_std:.8e}, pre_shift_logprobs_std={pre_shift_logprobs_std:.8e}. "
+                        "This usually indicates a broken LM head load/tie path."
+                    )
+                if pad_like_frac > 0.9999 and trainer_logprobs_std < 1e-8:
+                    raise RuntimeError(
+                        f"{tag_prefix}Trainer logprobs are effectively all pad/uniform values "
+                        f"(pad_like_frac={pad_like_frac:.8e}, trainer_logprobs_std={trainer_logprobs_std:.8e}); "
+                        "aborting sweep because losses are not informative."
+                    )
 
             loss, loss_tensors = compute_loss(
                 trainer_logprobs=out["logprobs"].squeeze().split(response_lengths),
