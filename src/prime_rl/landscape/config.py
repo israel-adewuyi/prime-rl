@@ -74,6 +74,17 @@ class DirectionConfig(BaseConfig):
 class SweepConfig(BaseConfig):
     grid: GridConfig = GridConfig()
     direction: DirectionConfig = DirectionConfig()
+    eval_mode: Annotated[
+        Literal["loss_fixed_batch", "reward_online", "both"],
+        Field(
+            description=(
+                "Evaluation mode for landscape sweep: "
+                "loss_fixed_batch reuses one old-policy batch for all points, "
+                "reward_online generates rollouts per point, "
+                "both runs both evaluations per point."
+            )
+        ),
+    ] = "loss_fixed_batch"
 
     num_examples: Annotated[
         int | None,

@@ -20,3 +20,13 @@ def test_landscape_rejects_lora() -> None:
 def test_landscape_rejects_inference_lora() -> None:
     with pytest.raises(ValidationError, match="landscape does not support inference.enable_lora"):
         LandscapeConfig(inference={"enable_lora": True})
+
+
+def test_landscape_eval_mode_defaults_to_loss_fixed_batch() -> None:
+    config = LandscapeConfig()
+    assert config.sweep.eval_mode == "loss_fixed_batch"
+
+
+def test_landscape_rejects_invalid_eval_mode() -> None:
+    with pytest.raises(ValidationError):
+        LandscapeConfig(sweep={"eval_mode": "invalid"})

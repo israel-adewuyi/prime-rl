@@ -9,7 +9,7 @@ from transformers import AutoProcessor
 from prime_rl.landscape.config import LandscapeConfig
 from prime_rl.landscape.directions import apply_point
 from prime_rl.landscape.eval_loss import compute_eval_loss, micro_batch_to_tensor
-from prime_rl.landscape.io import append_result, append_rollouts
+from prime_rl.landscape.io import append_result
 from prime_rl.landscape.weights import write_weights
 from prime_rl.orchestrator.advantage import compute_advantages
 from prime_rl.orchestrator.buffer import Buffer
@@ -27,6 +27,14 @@ from prime_rl.utils.vlm import is_vlm_model
 class SweepPoint:
     alpha: float
     beta: float
+
+
+@dataclass(frozen=True)
+class FixedOldPolicyBatch:
+    micro_batches: list[dict]
+    reward_mean: float
+    reward_std: float
+    num_rollouts: int
 
 
 def _prepare_examples(config: LandscapeConfig):
@@ -72,28 +80,80 @@ def _ensure_rollout_temperatures(rollouts: list[vf.State], default_temp: float) 
                 step["temperature"] = default_temp
 
 
-async def _evaluate_point(
+def _compute_reward_stats(rollouts: list[vf.State]) -> tuple[float, float]:
+    rewards = [rollout["reward"] for rollout in rollouts]
+    reward_mean = float(sum(rewards) / max(len(rewards), 1))
+    reward_std = float(torch.tensor(rewards).float().std(unbiased=False).item()) if rewards else 0.0
+    return reward_mean, reward_std
+
+
+def _build_train_examples(
+    *,
+    config: LandscapeConfig,
+    rollouts: list[vf.State],
+    rollouts_per_example: int,
+    is_vlm: bool,
+    processor,
+) -> list:
+    rewards = [rollout["reward"] for rollout in rollouts]
+    completion_lens = [get_completion_len(rollout) for rollout in rollouts]
+    advantages = compute_advantages(
+        rewards,
+        completion_lens,
+        rollouts_per_example,
+        config.orchestrator.advantage,
+    )
+
+    rollout_fn = interleave_rollout if config.orchestrator.trajectory_strategy == "interleaved" else branch_rollout
+    vlm_cache = build_vlm_image_cache(rollouts, processor) if is_vlm else None
+
+    train_examples = []
+    for rollout, advantage in zip(rollouts, advantages):
+        if vlm_cache is not None:
+            cached = vlm_cache.get(rollout["example_id"])
+            samples = rollout_fn(rollout, cached_pixel_values=cached[0], cached_image_grid_thw=cached[1])
+        else:
+            samples = rollout_fn(rollout)
+        if samples is None:
+            continue
+        for sample in samples:
+            sample.advantage = advantage
+            sample.reward = rollout["reward"]
+        train_examples.extend(samples)
+
+    if not train_examples:
+        raise ValueError("No training samples were produced from rollouts")
+
+    return train_examples
+
+
+def _prepare_micro_batches(config: LandscapeConfig, train_examples: list) -> list[dict]:
+    micro_batches_grid = prepare_batch(
+        rollouts=train_examples,
+        seq_len=config.trainer.model.seq_len,
+        pad_to_multiple_of=config.trainer.model.cp,
+        num_train_workers=1,
+        idxs=[0] * len(train_examples),
+        num_loras=1,
+    )
+    if not micro_batches_grid or not micro_batches_grid[0]:
+        raise ValueError("No micro-batches were created from training samples")
+    return [micro_batch_to_tensor(mb) for mb in micro_batches_grid[0]]
+
+
+async def _generate_rollouts_with_current_weights(
     *,
     config: LandscapeConfig,
     model: torch.nn.Module,
-    parallel_dims,
     inference_pool,
     env,
     examples,
     rollouts_per_example: int,
     sampling_args: dict,
     temperature: float,
-    is_vlm: bool,
-    processor,
     weight_dir: Path,
-    results_path: Path,
-    rollouts_path: Path,
-    alpha: float,
-    beta: float,
-    baseline: bool,
-    logger,
-) -> None:
-    start_time = time.perf_counter()
+    pbar_description: str,
+) -> list[vf.State]:
     write_weights(
         model,
         weight_dir,
@@ -109,88 +169,100 @@ async def _evaluate_point(
         examples=examples,
         rollouts_per_example=rollouts_per_example,
         sampling_args=sampling_args,
-        pbar_description=f"Rollouts (alpha={alpha:.3f}, beta={beta:.3f})",
+        pbar_description=pbar_description,
     )
     _ensure_rollout_temperatures(rollouts, temperature)
-    if not baseline:
-        append_rollouts(rollouts_path, rollouts, alpha, beta)
-    logger.debug(f"Completed rollouts for alpha={alpha:.3f}, beta={beta:.3f}")
+    return rollouts
 
-    rewards = [rollout["reward"] for rollout in rollouts]
-    completion_lens = [get_completion_len(rollout) for rollout in rollouts]
-    advantages = compute_advantages(
-        rewards,
-        completion_lens,
-        rollouts_per_example,
-        config.orchestrator.advantage,
+
+async def _collect_fixed_old_policy_batch(
+    *,
+    config: LandscapeConfig,
+    model: torch.nn.Module,
+    inference_pool,
+    env,
+    examples,
+    rollouts_per_example: int,
+    sampling_args: dict,
+    temperature: float,
+    is_vlm: bool,
+    processor,
+    weight_dir: Path,
+    logger,
+) -> FixedOldPolicyBatch:
+    logger.info("Collecting fixed old-policy batch at alpha=0.000 beta=0.000")
+    rollouts = await _generate_rollouts_with_current_weights(
+        config=config,
+        model=model,
+        inference_pool=inference_pool,
+        env=env,
+        examples=examples,
+        rollouts_per_example=rollouts_per_example,
+        sampling_args=sampling_args,
+        temperature=temperature,
+        weight_dir=weight_dir,
+        pbar_description="Rollouts (fixed old policy)",
     )
-    logger.debug(f"Completed advantages for alpha={alpha:.3f}, beta={beta:.3f}")
 
-    rollout_fn = interleave_rollout if config.orchestrator.trajectory_strategy == "interleaved" else branch_rollout
-    vlm_cache = None
-    if is_vlm:
-        vlm_cache = build_vlm_image_cache(rollouts, processor)
-
-    logger.debug(f"Building train examples for alpha={alpha:.3f}, beta={beta:.3f}")
-    train_examples = []
-    for rollout, advantage in zip(rollouts, advantages):
-        if vlm_cache is not None:
-            cached = vlm_cache.get(rollout["example_id"])
-            samples = rollout_fn(rollout, cached_pixel_values=cached[0], cached_image_grid_thw=cached[1])
-        else:
-            samples = rollout_fn(rollout)
-        if samples is None:
-            continue
-        for sample in samples:
-            sample.advantage = advantage
-            sample.reward = rollout["reward"]
-        train_examples.extend(samples)
-    logger.debug(f"Completed train examples for alpha={alpha:.3f}, beta={beta:.3f}")
-    if not train_examples:
-        raise ValueError("No training samples were produced from rollouts")
-
-    micro_batches_grid = prepare_batch(
-        rollouts=train_examples,
-        seq_len=config.trainer.model.seq_len,
-        pad_to_multiple_of=config.trainer.model.cp,
-        num_train_workers=1,
-        idxs=[0] * len(train_examples),
-        num_loras=1,
+    train_examples = _build_train_examples(
+        config=config,
+        rollouts=rollouts,
+        rollouts_per_example=rollouts_per_example,
+        is_vlm=is_vlm,
+        processor=processor,
     )
-    if not micro_batches_grid or not micro_batches_grid[0]:
-        raise ValueError("No micro-batches were created from training samples")
-    micro_batches = [micro_batch_to_tensor(mb) for mb in micro_batches_grid[0]]
-    logger.debug(f"Completed micro-batches for alpha={alpha:.3f}, beta={beta:.3f}")
+    micro_batches = _prepare_micro_batches(config, train_examples)
+    reward_mean, reward_std = _compute_reward_stats(rollouts)
 
-    loss_value = compute_eval_loss(
-        model,
-        micro_batches,
-        config.trainer.loss,
-        parallel_dims,
+    logger.info(
+        f"Prepared fixed old-policy batch: num_rollouts={len(rollouts)} num_train_samples={len(train_examples)}"
     )
-    logger.debug(f"Completed loss for alpha={alpha:.3f}, beta={beta:.3f}")
+    return FixedOldPolicyBatch(
+        micro_batches=micro_batches,
+        reward_mean=reward_mean,
+        reward_std=reward_std,
+        num_rollouts=len(rollouts),
+    )
 
-    reward_mean = float(sum(rewards) / max(len(rewards), 1))
-    reward_std = float(torch.tensor(rewards).float().std(unbiased=False).item()) if rewards else 0.0
-    elapsed_s = time.perf_counter() - start_time
 
-    row = {
-        "alpha": alpha,
-        "beta": beta,
-        "loss": loss_value,
+async def _evaluate_reward_online_point(
+    *,
+    config: LandscapeConfig,
+    model: torch.nn.Module,
+    inference_pool,
+    env,
+    examples,
+    rollouts_per_example: int,
+    sampling_args: dict,
+    temperature: float,
+    weight_dir: Path,
+    alpha: float,
+    beta: float,
+) -> dict:
+    start_time = time.perf_counter()
+    rollouts = await _generate_rollouts_with_current_weights(
+        config=config,
+        model=model,
+        inference_pool=inference_pool,
+        env=env,
+        examples=examples,
+        rollouts_per_example=rollouts_per_example,
+        sampling_args=sampling_args,
+        temperature=temperature,
+        weight_dir=weight_dir,
+        pbar_description=f"Rollouts (alpha={alpha:.3f}, beta={beta:.3f})",
+    )
+    reward_mean, reward_std = _compute_reward_stats(rollouts)
+    return {
         "reward_mean": reward_mean,
         "reward_std": reward_std,
         "num_rollouts": len(rollouts),
-        "num_examples": len(examples),
-        "elapsed_s": elapsed_s,
-        "baseline": baseline,
+        "elapsed_reward_s": time.perf_counter() - start_time,
     }
-    if not baseline:
-        append_result(results_path, row)
-    logger.info(
-        f"alpha={alpha:.3f} beta={beta:.3f} loss={loss_value:.4f} "
-        f"reward_mean={reward_mean:.4f} baseline={baseline}"
-    )
+
+
+def _is_origin(alpha: float, beta: float, tol: float = 1e-12) -> bool:
+    return abs(alpha) <= tol and abs(beta) <= tol
 
 
 async def run_sweep(
@@ -205,82 +277,122 @@ async def run_sweep(
     logger,
 ) -> None:
     logger.info(
-        f"Running sweep with alpha={config.sweep.grid.alpha_min} to {config.sweep.grid.alpha_max} and beta={config.sweep.grid.beta_min} to {config.sweep.grid.beta_max}"
+        "Running sweep with "
+        f"alpha={config.sweep.grid.alpha_min} to {config.sweep.grid.alpha_max} and "
+        f"beta={config.sweep.grid.beta_min} to {config.sweep.grid.beta_max}"
     )
+
+    eval_mode = config.sweep.eval_mode
+    run_loss_fixed_batch = eval_mode in ("loss_fixed_batch", "both")
+    run_reward_online = eval_mode in ("reward_online", "both")
+
     inference_pool = await setup_inference_pool(
         config.orchestrator.client,
         base_model=config.orchestrator.model.name,
     )
-    await inference_pool.wait_for_ready(config.orchestrator.model.name)
 
-    env, examples, rollouts_per_example = _prepare_examples(config)
-    max_concurrent = config.orchestrator.max_concurrent
-    if max_concurrent is None:
-        max_concurrent = len(examples) * rollouts_per_example
-    await set_semaphore(max_concurrent)
-    temperature = compute_temperature(0, config.orchestrator.sampling, config.orchestrator.max_steps)
-    sampling_args = get_sampling_args(config.orchestrator.sampling, temperature=temperature)
+    try:
+        await inference_pool.wait_for_ready(config.orchestrator.model.name)
 
-    is_vlm = is_vlm_model(config.orchestrator.model.name)
-    processor = None
-    if is_vlm:
-        processor = AutoProcessor.from_pretrained(
-            config.orchestrator.model.name,
-            trust_remote_code=config.orchestrator.model.trust_remote_code,
-            use_fast=True,
-        )
+        env, examples, rollouts_per_example = _prepare_examples(config)
+        max_concurrent = config.orchestrator.max_concurrent
+        if max_concurrent is None:
+            max_concurrent = len(examples) * rollouts_per_example
+        await set_semaphore(max_concurrent)
+        temperature = compute_temperature(0, config.orchestrator.sampling, config.orchestrator.max_steps)
+        sampling_args = get_sampling_args(config.orchestrator.sampling, temperature=temperature)
 
-    sweep_points = _prepare_sweep_points(config.sweep.grid)
+        is_vlm = is_vlm_model(config.orchestrator.model.name)
+        processor = None
+        if is_vlm:
+            processor = AutoProcessor.from_pretrained(
+                config.orchestrator.model.name,
+                trust_remote_code=config.orchestrator.model.trust_remote_code,
+                use_fast=True,
+            )
 
-    weight_dir = output_dir / config.sweep.weights_dir
-    results_path = output_dir / config.sweep.results_file
-    rollouts_path = output_dir / config.sweep.rollouts_file
+        sweep_points = _prepare_sweep_points(config.sweep.grid)
 
-    apply_point(params, base_tensors, delta_direction, eta_direction, 0.0, 0.0)
-    await _evaluate_point(
-        config=config,
-        model=model,
-        parallel_dims=parallel_dims,
-        inference_pool=inference_pool,
-        env=env,
-        examples=examples,
-        rollouts_per_example=rollouts_per_example,
-        sampling_args=sampling_args,
-        temperature=temperature,
-        is_vlm=is_vlm,
-        processor=processor,
-        weight_dir=weight_dir,
-        results_path=results_path,
-        rollouts_path=rollouts_path,
-        alpha=0.0,
-        beta=0.0,
-        baseline=True,
-        logger=logger,
-    )
+        weight_dir = output_dir / config.sweep.weights_dir
+        results_path = output_dir / config.sweep.results_file
 
-    for point in sweep_points:
-        with torch.no_grad():
-            apply_point(params, base_tensors, delta_direction, eta_direction, point.alpha, point.beta)
+        fixed_old_batch = None
+        if run_loss_fixed_batch:
+            with torch.no_grad():
+                apply_point(params, base_tensors, delta_direction, eta_direction, 0.0, 0.0)
+            fixed_old_batch = await _collect_fixed_old_policy_batch(
+                config=config,
+                model=model,
+                inference_pool=inference_pool,
+                env=env,
+                examples=examples,
+                rollouts_per_example=rollouts_per_example,
+                sampling_args=sampling_args,
+                temperature=temperature,
+                is_vlm=is_vlm,
+                processor=processor,
+                weight_dir=weight_dir,
+                logger=logger,
+            )
 
-        await _evaluate_point(
-            config=config,
-            model=model,
-            parallel_dims=parallel_dims,
-            inference_pool=inference_pool,
-            env=env,
-            examples=examples,
-            rollouts_per_example=rollouts_per_example,
-            sampling_args=sampling_args,
-            temperature=temperature,
-            is_vlm=is_vlm,
-            processor=processor,
-            weight_dir=weight_dir,
-            results_path=results_path,
-            rollouts_path=rollouts_path,
-            alpha=point.alpha,
-            beta=point.beta,
-            baseline=False,
-            logger=logger,
-        )
+        for point in sweep_points:
+            with torch.no_grad():
+                apply_point(params, base_tensors, delta_direction, eta_direction, point.alpha, point.beta)
 
-    await inference_pool.stop()
+            point_start = time.perf_counter()
+            row = {
+                "alpha": point.alpha,
+                "beta": point.beta,
+                "loss": None,
+                "reward_mean": None,
+                "reward_std": None,
+                "num_rollouts": None,
+                "reward_old_mean": fixed_old_batch.reward_mean if fixed_old_batch is not None else None,
+                "reward_old_std": fixed_old_batch.reward_std if fixed_old_batch is not None else None,
+                "num_rollouts_old": fixed_old_batch.num_rollouts if fixed_old_batch is not None else None,
+                "num_examples": len(examples),
+                "eval_mode": eval_mode,
+                "baseline": _is_origin(point.alpha, point.beta),
+                "elapsed_loss_s": None,
+                "elapsed_reward_s": None,
+                "elapsed_s": None,
+            }
+
+            if run_loss_fixed_batch:
+                assert fixed_old_batch is not None
+                loss_start = time.perf_counter()
+                row["loss"] = compute_eval_loss(
+                    model,
+                    fixed_old_batch.micro_batches,
+                    config.trainer.loss,
+                    parallel_dims,
+                )
+                row["elapsed_loss_s"] = time.perf_counter() - loss_start
+
+            if run_reward_online:
+                reward_metrics = await _evaluate_reward_online_point(
+                    config=config,
+                    model=model,
+                    inference_pool=inference_pool,
+                    env=env,
+                    examples=examples,
+                    rollouts_per_example=rollouts_per_example,
+                    sampling_args=sampling_args,
+                    temperature=temperature,
+                    weight_dir=weight_dir,
+                    alpha=point.alpha,
+                    beta=point.beta,
+                )
+                row.update(reward_metrics)
+
+            row["elapsed_s"] = time.perf_counter() - point_start
+            append_result(results_path, row)
+
+            summary = [f"alpha={point.alpha:.3f}", f"beta={point.beta:.3f}"]
+            if row["loss"] is not None:
+                summary.append(f"loss={row['loss']:.4f}")
+            if row["reward_mean"] is not None:
+                summary.append(f"reward_mean={row['reward_mean']:.4f}")
+            logger.info(" ".join(summary))
+    finally:
+        await inference_pool.stop()
