@@ -94,7 +94,7 @@ def _build_train_examples(
     rollouts_per_example: int,
     is_vlm: bool,
     processor,
-) -> list:
+) -> tuple[list, list[float]]:
     rewards = [rollout["reward"] for rollout in rollouts]
     completion_lens = [get_completion_len(rollout) for rollout in rollouts]
     advantages = compute_advantages(
@@ -124,7 +124,7 @@ def _build_train_examples(
     if not train_examples:
         raise ValueError("No training samples were produced from rollouts")
 
-    return train_examples
+    return train_examples, advantages
 
 
 def _prepare_micro_batches(config: LandscapeConfig, train_examples: list) -> list[dict]:
@@ -204,7 +204,7 @@ async def _collect_fixed_old_policy_batch(
         pbar_description="Rollouts (fixed old policy)",
     )
 
-    train_examples = _build_train_examples(
+    train_examples, advantages = _build_train_examples(
         config=config,
         rollouts=rollouts,
         rollouts_per_example=rollouts_per_example,
@@ -213,10 +213,26 @@ async def _collect_fixed_old_policy_batch(
     )
     micro_batches = _prepare_micro_batches(config, train_examples)
     reward_mean, reward_std = _compute_reward_stats(rollouts)
+    advantages_tensor = torch.tensor(advantages, dtype=torch.float32)
+    adv_mean = float(advantages_tensor.mean().item()) if advantages else 0.0
+    adv_std = float(advantages_tensor.std(unbiased=False).item()) if advantages else 0.0
+    adv_nonzero_frac = float((advantages_tensor != 0).float().mean().item()) if advantages else 0.0
+    loss_mask_true_count = sum(int(micro_batch["loss_mask"].sum().item()) for micro_batch in micro_batches)
+    loss_mask_total_count = sum(int(micro_batch["loss_mask"].numel()) for micro_batch in micro_batches)
+    loss_mask_true_frac = float(loss_mask_true_count / max(loss_mask_total_count, 1))
 
     logger.info(
         f"Prepared fixed old-policy batch: num_rollouts={len(rollouts)} num_train_samples={len(train_examples)}"
     )
+    logger.info(
+        "Fixed old-policy diagnostics: "
+        f"adv_mean={adv_mean:.8e} adv_std={adv_std:.8e} adv_nonzero_frac={adv_nonzero_frac:.6f} "
+        f"loss_mask_true_frac={loss_mask_true_frac:.6f}"
+    )
+    if adv_nonzero_frac == 0.0:
+        logger.warning(
+            "Fixed old-policy diagnostics: all advantages are zero; loss can collapse to 0.0 unless loss.kl_tau > 0."
+        )
     return FixedOldPolicyBatch(
         micro_batches=micro_batches,
         reward_mean=reward_mean,
