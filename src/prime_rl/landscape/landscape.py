@@ -51,6 +51,45 @@ def _configure_trainer_cuda_visible_devices(config: LandscapeConfig, logger_obj)
     logger_obj.info(f"Configured trainer visible GPU(s): {visible_devices}")
 
 
+def _log_trainer_cuda_context(config: LandscapeConfig, logger_obj, stage: str) -> None:
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    local_rank = os.environ.get("LOCAL_RANK", "0")
+    local_world_size = os.environ.get("LOCAL_WORLD_SIZE", "1")
+    logger_obj.info(
+        f"[{stage}] trainer CUDA context: "
+        f"CUDA_VISIBLE_DEVICES={cuda_visible} LOCAL_RANK={local_rank} LOCAL_WORLD_SIZE={local_world_size}"
+    )
+
+    if not torch.cuda.is_available():
+        logger_obj.warning(f"[{stage}] torch.cuda.is_available()=False")
+        return
+
+    visible_count = torch.cuda.device_count()
+    expected_count = len(config.trainer_gpu_ids)
+    if visible_count != expected_count:
+        raise RuntimeError(
+            "Mismatch between configured trainer_gpu_ids and visible CUDA device count. "
+            f"trainer_gpu_ids={config.trainer_gpu_ids} (count={expected_count}), "
+            f"torch.cuda.device_count()={visible_count}. "
+            "This can happen if CUDA was initialized before trainer GPU masking was applied."
+        )
+
+    current_local_device = torch.cuda.current_device()
+    mapped_physical_id = None
+    if cuda_visible:
+        mapped_ids = [int(x.strip()) for x in cuda_visible.split(",") if x.strip()]
+        if current_local_device < len(mapped_ids):
+            mapped_physical_id = mapped_ids[current_local_device]
+
+    device_name = torch.cuda.get_device_name(current_local_device)
+    logger_obj.info(
+        f"[{stage}] trainer CUDA device: "
+        f"local_cuda_index={current_local_device} "
+        f"mapped_physical_gpu_id={mapped_physical_id} "
+        f"device_name={device_name}"
+    )
+
+
 def _resolve_compute_device(params: list[tuple[str, torch.nn.Parameter]]) -> torch.device:
     for _, param in params:
         if param.is_floating_point():
@@ -78,6 +117,7 @@ def main() -> None:
 
     try:
         _configure_trainer_cuda_visible_devices(config, logger_obj)
+        _log_trainer_cuda_context(config, logger_obj, stage="pre_dist_init")
 
         logger_obj.info(f"Landscape using configured trainer.model.compile={config.trainer.model.compile}")
         logger_obj.info(
@@ -103,6 +143,7 @@ def main() -> None:
                 )
 
         setup_torch_distributed(enable_gloo=config.trainer.model.fsdp_cpu_offload)
+        _log_trainer_cuda_context(config, logger_obj, stage="post_dist_init")
         torch.set_float32_matmul_precision("high")
 
         parallel_dims = get_parallel_dims(config.trainer.model)
