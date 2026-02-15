@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import json
 from pathlib import Path
 
@@ -86,6 +87,22 @@ def append_result(output_path: Path, row: dict) -> None:
                     "Delete the file or change output_dir to continue."
                 )
         writer.writerow(row)
+
+
+def append_sampled_prompts(output_path: Path, examples: list[dict]) -> str:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    prompts = [example.get("prompt") for example in examples]
+    prompts_payload = json.dumps(prompts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    prompts_hash = hashlib.sha256(prompts_payload.encode("utf-8")).hexdigest()
+
+    with open(output_path, "a", encoding="utf-8") as f:
+        f.write(f"=== sampled_prompts count={len(examples)} sha256={prompts_hash} ===\n")
+        for prompt in prompts:
+            f.write(json.dumps(prompt, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            f.write("\n")
+        f.write("\n")
+
+    return prompts_hash
 
 
 def append_rollouts(output_path: Path, rollouts: list[vf.State], alpha: float, beta: float) -> None:

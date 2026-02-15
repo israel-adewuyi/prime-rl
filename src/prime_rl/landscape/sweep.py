@@ -9,7 +9,7 @@ from transformers import AutoProcessor
 from prime_rl.landscape.config import LandscapeConfig
 from prime_rl.landscape.directions import apply_point, compute_parameter_delta_stats
 from prime_rl.landscape.eval_loss import compute_eval_loss, micro_batch_to_tensor
-from prime_rl.landscape.io import append_result
+from prime_rl.landscape.io import append_result, append_sampled_prompts
 from prime_rl.landscape.weights import write_weights
 from prime_rl.orchestrator.advantage import compute_advantages
 from prime_rl.orchestrator.buffer import Buffer
@@ -333,6 +333,12 @@ async def run_sweep(
 
         weight_dir = output_dir / config.sweep.weights_dir
         results_path = output_dir / config.sweep.results_file
+        sampled_prompts_path = output_dir / config.sweep.rollouts_file
+        sampled_prompts_hash = append_sampled_prompts(sampled_prompts_path, examples)
+        logger.info(
+            f"Appended sampled prompts to {sampled_prompts_path} "
+            f"(count={len(examples)} sha256={sampled_prompts_hash})"
+        )
 
         fixed_old_batch = None
         if run_loss_fixed_batch:
