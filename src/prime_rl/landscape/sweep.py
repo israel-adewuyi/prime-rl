@@ -8,7 +8,7 @@ from transformers import AutoProcessor
 
 from prime_rl.landscape.config import LandscapeConfig
 from prime_rl.landscape.directions import apply_point, compute_parameter_delta_stats
-from prime_rl.landscape.eval_loss import compute_eval_loss, micro_batch_to_tensor
+from prime_rl.landscape.eval_loss import LOSS_DIAGNOSTIC_COLUMNS, compute_eval_loss, micro_batch_to_tensor
 from prime_rl.landscape.io import append_result, append_sampled_prompts
 from prime_rl.landscape.weights import write_weights
 from prime_rl.orchestrator.advantage import compute_advantages
@@ -36,6 +36,12 @@ class FixedOldPolicyBatch:
     reward_mean: float
     reward_std: float
     num_rollouts: int
+    num_train_samples: int
+    adv_mean: float
+    adv_std: float
+    adv_abs_mean: float
+    adv_nonzero_frac: float
+    loss_mask_true_frac: float
 
 
 def _prepare_examples(config: LandscapeConfig):
@@ -217,6 +223,7 @@ async def _collect_fixed_old_policy_batch(
     advantages_tensor = torch.tensor(advantages, dtype=torch.float32)
     adv_mean = float(advantages_tensor.mean().item()) if advantages else 0.0
     adv_std = float(advantages_tensor.std(unbiased=False).item()) if advantages else 0.0
+    adv_abs_mean = float(advantages_tensor.abs().mean().item()) if advantages else 0.0
     adv_nonzero_frac = float((advantages_tensor != 0).float().mean().item()) if advantages else 0.0
     loss_mask_true_count = sum(int(micro_batch["loss_mask"].sum().item()) for micro_batch in micro_batches)
     loss_mask_total_count = sum(int(micro_batch["loss_mask"].numel()) for micro_batch in micro_batches)
@@ -239,6 +246,12 @@ async def _collect_fixed_old_policy_batch(
         reward_mean=reward_mean,
         reward_std=reward_std,
         num_rollouts=len(rollouts),
+        num_train_samples=len(train_examples),
+        adv_mean=adv_mean,
+        adv_std=adv_std,
+        adv_abs_mean=adv_abs_mean,
+        adv_nonzero_frac=adv_nonzero_frac,
+        loss_mask_true_frac=loss_mask_true_frac,
     )
 
 
@@ -382,18 +395,25 @@ async def run_sweep(
                 "reward_old_mean": fixed_old_batch.reward_mean if fixed_old_batch is not None else None,
                 "reward_old_std": fixed_old_batch.reward_std if fixed_old_batch is not None else None,
                 "num_rollouts_old": fixed_old_batch.num_rollouts if fixed_old_batch is not None else None,
+                "num_train_samples_old": fixed_old_batch.num_train_samples if fixed_old_batch is not None else None,
+                "adv_old_mean": fixed_old_batch.adv_mean if fixed_old_batch is not None else None,
+                "adv_old_std": fixed_old_batch.adv_std if fixed_old_batch is not None else None,
+                "adv_old_abs_mean": fixed_old_batch.adv_abs_mean if fixed_old_batch is not None else None,
+                "adv_old_nonzero_frac": fixed_old_batch.adv_nonzero_frac if fixed_old_batch is not None else None,
+                "loss_mask_old_true_frac": fixed_old_batch.loss_mask_true_frac if fixed_old_batch is not None else None,
                 "num_examples": len(examples),
                 "eval_mode": eval_mode,
                 "baseline": _is_origin(point.alpha, point.beta),
                 "elapsed_loss_s": None,
                 "elapsed_reward_s": None,
                 "elapsed_s": None,
+                **{key: None for key in LOSS_DIAGNOSTIC_COLUMNS},
             }
 
             if run_loss_fixed_batch:
                 assert fixed_old_batch is not None
                 loss_start = time.perf_counter()
-                row["loss"] = compute_eval_loss(
+                loss, loss_diagnostics = compute_eval_loss(
                     model,
                     fixed_old_batch.micro_batches,
                     config.trainer.loss,
@@ -401,6 +421,8 @@ async def run_sweep(
                     compute_device,
                     eval_tag=f"alpha={point.alpha:.6f},beta={point.beta:.6f}",
                 )
+                row["loss"] = loss
+                row.update(loss_diagnostics)
                 row["elapsed_loss_s"] = time.perf_counter() - loss_start
 
             if run_reward_online:
@@ -425,6 +447,7 @@ async def run_sweep(
             summary = [f"alpha={point.alpha:.3f}", f"beta={point.beta:.3f}"]
             if row["loss"] is not None:
                 summary.append(f"loss={row['loss']:.4f}")
+                summary.append(f"mismatch_kl={row['loss_mismatch_kl_mean']:.4f}")
             if row["reward_mean"] is not None:
                 summary.append(f"reward_mean={row['reward_mean']:.4f}")
             logger.info(" ".join(summary))

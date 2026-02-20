@@ -47,6 +47,12 @@ class _Harness:
                 reward_mean=0.5,
                 reward_std=0.1,
                 num_rollouts=4,
+                num_train_samples=7,
+                adv_mean=0.25,
+                adv_std=0.5,
+                adv_abs_mean=0.5,
+                adv_nonzero_frac=0.75,
+                loss_mask_true_frac=0.4,
             )
 
         async def fake_evaluate_reward_online_point(**_kwargs):
@@ -58,9 +64,10 @@ class _Harness:
                 "elapsed_reward_s": 0.01,
             }
 
-        def fake_compute_eval_loss(_model, _micro_batches, _loss_config, _parallel_dims, _device):
+        def fake_compute_eval_loss(_model, _micro_batches, _loss_config, _parallel_dims, _device, eval_tag=None):
+            _ = eval_tag
             self.calls["loss"] += 1
-            return 1.0 + self.calls["loss"]
+            return 1.0 + self.calls["loss"], {"loss_mismatch_kl_mean": 0.01 * self.calls["loss"]}
 
         def fake_append_result(_path: Path, row: dict) -> None:
             self.rows.append(dict(row))
@@ -133,6 +140,13 @@ def test_run_sweep_loss_fixed_batch_mode(monkeypatch) -> None:
         assert row["reward_old_mean"] == 0.5
         assert row["reward_old_std"] == 0.1
         assert row["num_rollouts_old"] == 4
+        assert row["num_train_samples_old"] == 7
+        assert row["adv_old_mean"] == 0.25
+        assert row["adv_old_std"] == 0.5
+        assert row["adv_old_abs_mean"] == 0.5
+        assert row["adv_old_nonzero_frac"] == 0.75
+        assert row["loss_mask_old_true_frac"] == 0.4
+        assert row["loss_mismatch_kl_mean"] is not None
         assert row["eval_mode"] == "loss_fixed_batch"
 
 
@@ -149,6 +163,9 @@ def test_run_sweep_reward_online_mode(monkeypatch) -> None:
         assert row["reward_old_mean"] is None
         assert row["reward_old_std"] is None
         assert row["num_rollouts_old"] is None
+        assert row["num_train_samples_old"] is None
+        assert row["adv_old_mean"] is None
+        assert row["loss_mismatch_kl_mean"] is None
         assert row["eval_mode"] == "reward_online"
 
 
@@ -165,4 +182,7 @@ def test_run_sweep_both_mode(monkeypatch) -> None:
         assert row["reward_old_mean"] == 0.5
         assert row["reward_old_std"] == 0.1
         assert row["num_rollouts_old"] == 4
+        assert row["num_train_samples_old"] == 7
+        assert row["adv_old_mean"] == 0.25
+        assert row["loss_mismatch_kl_mean"] is not None
         assert row["eval_mode"] == "both"

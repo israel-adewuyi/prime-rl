@@ -11,6 +11,26 @@ from prime_rl.trainer.rl.loss import (
 )
 from prime_rl.trainer.utils import get_response_lengths
 
+LOSS_DIAGNOSTIC_COLUMNS = (
+    "loss_mismatch_kl_mean",
+    "loss_masked_mismatch_kl_mean",
+    "loss_unmasked_mismatch_kl_mean",
+    "loss_teacher_kl_mean",
+    "loss_is_masked_frac",
+    "loss_is_masked_low_frac",
+    "loss_is_masked_high_frac",
+    "loss_sequence_masked_low_frac",
+    "loss_sequence_masked_high_frac",
+    "loss_geo_masked_low_frac",
+    "loss_geo_masked_high_frac",
+    "loss_geo_seq_ratio_mean",
+    "loss_adv_mean",
+    "loss_adv_std",
+    "loss_adv_abs_mean",
+    "loss_adv_nonzero_frac",
+    "loss_mask_true_frac",
+)
+
 
 def micro_batch_to_tensor(micro_batch) -> dict:
     return {
@@ -36,7 +56,7 @@ def compute_eval_loss(
     parallel_dims,
     device: torch.device,
     eval_tag: str | None = None,
-) -> float:
+) -> tuple[float, dict[str, float]]:
     def _selective_log_softmax_eager(logits: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
         logprobs = logits.log_softmax(dim=-1)
         return torch.gather(logprobs, dim=-1, index=index.unsqueeze(-1)).squeeze(-1)
@@ -45,10 +65,13 @@ def compute_eval_loss(
         pd = torch.nn.functional.softmax(shifted_logits, dim=-1)
         return torch.logsumexp(shifted_logits, dim=-1) - torch.sum(pd * shifted_logits, dim=-1)
 
-    def _mean_or_zero(tensor: torch.Tensor) -> float:
-        if tensor.numel() == 0:
+    def _mean_or_zero(tensors: list[torch.Tensor]) -> float:
+        if not tensors:
             return 0.0
-        return float(tensor.float().mean().item())
+        values = torch.cat(tensors)
+        if values.numel() == 0:
+            return 0.0
+        return float(values.mean().item())
 
     if loss_config.ratio_type == "token":
         loss_scale = sum(micro_batch["loss_mask"].sum().item() for micro_batch in micro_batches)
@@ -57,6 +80,10 @@ def compute_eval_loss(
     loss_scale = max(loss_scale, 1)
 
     losses = []
+    loss_tensors_by_key: dict[str, list[torch.Tensor]] = {}
+    masked_advantages: list[torch.Tensor] = []
+    loss_mask_true_count = 0
+    loss_mask_total_count = 0
     total_micro_batches = len(micro_batches)
     cp_enabled = parallel_dims.cp_enabled
     cp_rank = parallel_dims.world_mesh["cp"].get_local_rank() if cp_enabled else 0
@@ -71,6 +98,9 @@ def compute_eval_loss(
             advantages = micro_batch["advantages"].to(device)
             loss_mask = micro_batch["loss_mask"].to(device)
             inference_logprobs = micro_batch["inference_logprobs"].to(device)
+            masked_advantages.append(advantages[loss_mask].detach().float().reshape(-1).cpu())
+            loss_mask_true_count += int(loss_mask.sum().item())
+            loss_mask_total_count += int(loss_mask.numel())
 
             pixel_values = (
                 micro_batch["pixel_values"].to(device) if micro_batch.get("pixel_values") is not None else None
@@ -161,8 +191,39 @@ def compute_eval_loss(
                 loss_config=loss_config,
                 loss_scale=loss_scale,
             )
+            for key, tensor in loss_tensors.items():
+                loss_tensors_by_key.setdefault(key, []).append(tensor.detach().float().reshape(-1).cpu())
             losses.append(loss.detach().float().cpu().item())
 
     sum_loss = float(sum(losses))  # we already normalize in compute_loss
     logger.debug(f"Sum of avg loss over {total_micro_batches} micro-batches: {sum_loss:.7f}")
-    return sum_loss
+
+    diagnostics = {key: 0.0 for key in LOSS_DIAGNOSTIC_COLUMNS}
+    diagnostics["loss_mismatch_kl_mean"] = _mean_or_zero(loss_tensors_by_key.get("mismatch_kl", []))
+    diagnostics["loss_masked_mismatch_kl_mean"] = _mean_or_zero(loss_tensors_by_key.get("masked_mismatch_kl", []))
+    diagnostics["loss_unmasked_mismatch_kl_mean"] = _mean_or_zero(
+        loss_tensors_by_key.get("unmasked_mismatch_kl", [])
+    )
+    diagnostics["loss_teacher_kl_mean"] = _mean_or_zero(loss_tensors_by_key.get("teacher_kl", []))
+    diagnostics["loss_is_masked_frac"] = _mean_or_zero(loss_tensors_by_key.get("is_masked", []))
+    diagnostics["loss_is_masked_low_frac"] = _mean_or_zero(loss_tensors_by_key.get("is_masked_low", []))
+    diagnostics["loss_is_masked_high_frac"] = _mean_or_zero(loss_tensors_by_key.get("is_masked_high", []))
+    diagnostics["loss_sequence_masked_low_frac"] = _mean_or_zero(
+        loss_tensors_by_key.get("sequence_masked_low", [])
+    )
+    diagnostics["loss_sequence_masked_high_frac"] = _mean_or_zero(
+        loss_tensors_by_key.get("sequence_masked_high", [])
+    )
+    diagnostics["loss_geo_masked_low_frac"] = _mean_or_zero(loss_tensors_by_key.get("geo_masked_low", []))
+    diagnostics["loss_geo_masked_high_frac"] = _mean_or_zero(loss_tensors_by_key.get("geo_masked_high", []))
+    diagnostics["loss_geo_seq_ratio_mean"] = _mean_or_zero(loss_tensors_by_key.get("geo_seq_ratio", []))
+    diagnostics["loss_mask_true_frac"] = float(loss_mask_true_count / max(loss_mask_total_count, 1))
+
+    all_masked_advantages = torch.cat(masked_advantages) if masked_advantages else torch.tensor([], dtype=torch.float32)
+    if all_masked_advantages.numel() > 0:
+        diagnostics["loss_adv_mean"] = float(all_masked_advantages.mean().item())
+        diagnostics["loss_adv_std"] = float(all_masked_advantages.std(unbiased=False).item())
+        diagnostics["loss_adv_abs_mean"] = float(all_masked_advantages.abs().mean().item())
+        diagnostics["loss_adv_nonzero_frac"] = float((all_masked_advantages != 0).float().mean().item())
+
+    return sum_loss, diagnostics
