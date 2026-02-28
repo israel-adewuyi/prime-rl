@@ -106,7 +106,7 @@ def main() -> None:
 
     logger_obj = setup_logger(
         config.log.level,
-        log_file=output_dir / "logs" / "landscape.log" if config.log.file else None,
+        log_file=output_dir / "logs" / "landscape.stdout" if config.log.file else None,
     )
     intercept_verifiers_logging(level=config.log.vf_level)
     logger_obj.info("Starting landscape sweep")
