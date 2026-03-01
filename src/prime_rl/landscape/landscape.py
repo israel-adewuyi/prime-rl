@@ -16,6 +16,7 @@ from prime_rl.landscape.directions import (
     iter_named_parameters,
     load_direction_state_dict,
     log_direction_stats,
+    log_per_tensor_norm_matching,
     orthogonalize_and_normalize_directions,
     prepare_direction_tensors,
     save_direction_state_dict,
@@ -246,8 +247,16 @@ def main() -> None:
                 params,
                 base_tensors,
                 config.sweep.direction.seed_delta,
-                config.sweep.direction.norm,
                 config.sweep.direction.epsilon,
+            )
+            delta_names = list(delta_direction.keys())
+            log_per_tensor_norm_matching(
+                names=delta_names,
+                base_tensors=base_tensors,
+                direction=delta_direction,
+                epsilon=config.sweep.direction.epsilon,
+                label="delta(random)",
+                logger_obj=logger_obj,
             )
         if eta_direction is None:
             logger_obj.info("No eta_path configured; building random eta direction")
@@ -255,8 +264,16 @@ def main() -> None:
                 params,
                 base_tensors,
                 config.sweep.direction.seed_eta,
-                config.sweep.direction.norm,
                 config.sweep.direction.epsilon,
+            )
+            eta_names = list(eta_direction.keys())
+            log_per_tensor_norm_matching(
+                names=eta_names,
+                base_tensors=base_tensors,
+                direction=eta_direction,
+                epsilon=config.sweep.direction.epsilon,
+                label="eta(random)",
+                logger_obj=logger_obj,
             )
 
         floating_names = [name for name, param in params if param.is_floating_point()]

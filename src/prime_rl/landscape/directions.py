@@ -64,31 +64,23 @@ def build_random_direction(
     params: list[tuple[str, torch.nn.Parameter]],
     base_tensors: dict[str, torch.Tensor],
     seed: int,
-    norm: str,
     epsilon: float,
 ) -> dict[str, torch.Tensor]:
     device = _check_single_device(get_local_tensor(param) for _, param in params)
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
     raw = {}
-    total_param_sq = torch.tensor(0.0, device=device)
-    total_dir_sq = torch.tensor(0.0, device=device)
     for name, param in params:
         if not param.is_floating_point():
             continue
         base_tensor = base_tensors[name]
-        raw_dir = torch.randn_like(base_tensor)
+        raw_dir = torch.randn(
+            base_tensor.shape,
+            generator=generator,
+            device=base_tensor.device,
+            dtype=base_tensor.dtype,
+        )
         raw[name] = raw_dir
-        if norm == "global":
-            total_param_sq = total_param_sq + base_tensor.float().pow(2).sum()
-            total_dir_sq = total_dir_sq + raw_dir.float().pow(2).sum()
-
-    if norm == "global":
-        _maybe_all_reduce(total_param_sq)
-        _maybe_all_reduce(total_dir_sq)
-        if total_dir_sq.item() == 0.0:
-            raise ValueError("Direction has zero norm")
-        scale = torch.sqrt(total_param_sq) / (torch.sqrt(total_dir_sq) + epsilon)
 
     direction = {}
     for name, param in params:
@@ -96,14 +88,13 @@ def build_random_direction(
             continue
         base_tensor = base_tensors[name]
         raw_dir = raw[name]
-        if norm == "layer":
-            param_sq = base_tensor.float().pow(2).sum()
-            dir_sq = raw_dir.float().pow(2).sum()
-            _maybe_all_reduce(param_sq)
-            _maybe_all_reduce(dir_sq)
-            if dir_sq.item() == 0.0:
-                raise ValueError(f"Direction has zero norm for parameter {name}")
-            scale = torch.sqrt(param_sq) / (torch.sqrt(dir_sq) + epsilon)
+        param_sq = base_tensor.float().pow(2).sum()
+        dir_sq = raw_dir.float().pow(2).sum()
+        _maybe_all_reduce(param_sq)
+        _maybe_all_reduce(dir_sq)
+        if dir_sq.item() == 0.0:
+            raise ValueError(f"Direction has zero norm for parameter {name}")
+        scale = torch.sqrt(param_sq) / (torch.sqrt(dir_sq) + epsilon)
         direction[name] = raw_dir * scale
     return direction
 
@@ -292,6 +283,61 @@ def log_direction_stats(
     )
 
 
+def log_per_tensor_norm_matching(
+    names: list[str],
+    base_tensors: dict[str, torch.Tensor],
+    direction: dict[str, torch.Tensor],
+    epsilon: float,
+    label: str,
+    logger_obj,
+    rel_tol: float = 1e-5,
+    top_k: int = 5,
+) -> None:
+    if not names:
+        logger_obj.debug(f"{label} per-tensor norm check: no tensors to evaluate")
+        return
+
+    rows = []
+    for name in names:
+        if name not in direction:
+            continue
+        base_sq = base_tensors[name].float().pow(2).sum()
+        dir_sq = direction[name].float().pow(2).sum()
+        _maybe_all_reduce(base_sq)
+        _maybe_all_reduce(dir_sq)
+        base_norm = torch.sqrt(torch.clamp(base_sq, min=0.0)).item()
+        dir_norm = torch.sqrt(torch.clamp(dir_sq, min=0.0)).item()
+        rel_err = abs(dir_norm - base_norm) / (base_norm + epsilon)
+        rows.append((name, base_norm, dir_norm, rel_err))
+
+    if not rows:
+        logger_obj.debug(f"{label} per-tensor norm check: no matching direction tensors")
+        return
+
+    num_checked = len(rows)
+    num_above_tol = sum(1 for _, _, _, rel_err in rows if rel_err > rel_tol)
+    max_rel_err = max(rel_err for _, _, _, rel_err in rows)
+    mean_rel_err = sum(rel_err for _, _, _, rel_err in rows) / num_checked
+
+    logger_obj.debug(
+        f"{label} per-tensor norm check: checked={num_checked} rel_tol={rel_tol:.1e} "
+        f"num_above_tol={num_above_tol} max_rel_err={max_rel_err:.8e} mean_rel_err={mean_rel_err:.8e}"
+    )
+
+    top_rows = sorted(rows, key=lambda item: item[3], reverse=True)[: max(top_k, 0)]
+    for idx, (name, base_norm, dir_norm, rel_err) in enumerate(top_rows, start=1):
+        logger_obj.debug(
+            f"{label} norm check top{idx}: name={name} base_norm={base_norm:.8e} "
+            f"dir_norm={dir_norm:.8e} rel_err={rel_err:.8e}"
+        )
+
+    if num_above_tol > 0:
+        logger_obj.warning(
+            f"{label} per-tensor norm check failed for {num_above_tol}/{num_checked} tensors "
+            f"(rel_tol={rel_tol:.1e})"
+        )
+
+
 def orthogonalize_and_normalize_directions(
     params: list[tuple[str, torch.nn.Parameter]],
     delta_direction: dict[str, torch.Tensor],
@@ -336,7 +382,12 @@ def orthogonalize_and_normalize_directions(
         )
         generator = torch.Generator(device=eta_vector.device)
         generator.manual_seed(fallback_seed)
-        random_vector = torch.randn_like(eta_vector, generator=generator)
+        random_vector = torch.randn(
+            eta_vector.shape,
+            generator=generator,
+            device=eta_vector.device,
+            dtype=eta_vector.dtype,
+        )
         random_proj = _global_dot(random_vector, u1)
         eta_orth = random_vector - random_proj * u1
         eta_orth_norm = _global_norm(eta_orth)

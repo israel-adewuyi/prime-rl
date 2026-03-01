@@ -41,3 +41,8 @@ def test_landscape_rejects_empty_trainer_gpu_ids() -> None:
 def test_landscape_rejects_duplicate_trainer_gpu_ids() -> None:
     with pytest.raises(ValidationError, match="trainer_gpu_ids must not contain duplicates"):
         LandscapeConfig(trainer_gpu_ids=[0, 0])
+
+
+def test_landscape_rejects_removed_direction_norm_field() -> None:
+    with pytest.raises(ValidationError):
+        LandscapeConfig(sweep={"direction": {"norm": "global"}})

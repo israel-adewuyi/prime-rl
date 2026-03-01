@@ -29,10 +29,6 @@ class GridConfig(BaseConfig):
 class DirectionConfig(BaseConfig):
     seed_delta: Annotated[int, Field(description="Seed for the delta direction.")] = 0
     seed_eta: Annotated[int, Field(description="Seed for the eta direction.")] = 1
-    norm: Annotated[
-        Literal["layer", "global"],
-        Field(description="Normalization strategy for random directions."),
-    ] = "layer"
     param_filter: Annotated[
         Literal["trainable", "all"],
         Field(description="Which parameters to perturb."),
