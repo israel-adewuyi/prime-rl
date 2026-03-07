@@ -1,55 +1,69 @@
 # landscape config
 output_dir = "outputs/landscape"
+inference_gpu_ids = [2]
+trainer_gpu_ids = [2]
+
+[inference]
+gpu_memory_utilization = 0.7
 
 
 [trainer.model]
-name = "Qwen/Qwen2.5-0.5B-Instruct"
-seq_len = 32768
+name = "israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL-step_50"
+seq_len = 65536
+optimization_dtype = "bfloat16"
 
 [trainer.optim]
 lr = 1e-6
 
+# [trainer.loss]
+# token_mask_low = 0.0
+# token_mask_high = 1000000000.0
+# geo_mask_low = 0.0
+# geo_mask_high = 1000000000.0
+# sequence_mask_low = 0.0
+# sequence_mask_high = 1000000000.0
+
+
 [orchestrator.model]
-name = "Qwen/Qwen2.5-0.5B-Instruct"
+name = "israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL-step_50"
+
+[orchestrator.buffer]
+seed = 12345
 
 [orchestrator]
 batch_size = 512
-seq_len = 32768
-rollouts_per_example = 4
+seq_len = 65536
+rollouts_per_example = 8
+max_concurrent = 256
 
 [[orchestrator.env]]
 id = "alphabet-sort"
+args = { min_turns = 2, max_turns = 2, seed=12345 }
 
 [orchestrator.sampling]
-max_tokens = 784
-
-[orchestrator.eval]
-interval = 10
-rollouts_per_example = 2
-num_examples = 512
-env = [
-    {id = 'alphabet-sort'},
-    {args = { min_turns = 2, max_turns = 2 }}
-]
+max_tokens = 256
 
 [sweep]
-results_file = "d=AS_m=qwen-05B_s=0_alphabeta=0,1.csv"
-rollouts_file = "d=AS_m=qwen-05B_s=0_alphabeta=0,1.txt"
+# results_file = "s=10_landscape.csv"
+# rollouts_file = "s=10_landscape.txt"
+results_file = "d=AS_m=qwen-05B_s=50_alphabeta=0,05_size=25_batch=512_default_mask.csv"
+rollouts_file = "d=AS_m=qwen-05B_s=50_alphabeta=0,05_size=25_batch=512_default_mask.txt"
+eval_mode = "both"
 
 [sweep.grid]
-alpha_min = -0.1
-alpha_max = 0.1
-alpha_steps = 20
-beta_min = -0.1
-beta_max = 0.1
-beta_steps = 20
+alpha_min = -0.05
+alpha_max = 0.05
+alpha_steps = 25
+beta_min = -0.05
+beta_max = 0.05
+beta_steps = 25
 
 [sweep.direction]
 # delta_path = "hf://israel-adewuyi/gradients/gradients/0.5B_AS_grad_149.pt"
-delta_path = "/home/user/israel/prime-rl/outputs/grads/step_148.pt"
-eta_path = "/home/user/israel/prime-rl/outputs/grads/step_149.pt"
-# eta_path = "hf://israel-adewuyi/gradients/gradients/0.5B_AS_grad_148.pt"
-orthogonalize_paths = false
-orthogonalized_subdir = "directions"
-orthogonalized_suffix = "orth"
+# delta_path = "/home/user/israel/prime-rl/outputs/grads/step_148.pt"
+# eta_path = "/home/user/israel/prime-rl/outputs/grads/step_149.pt"
+# # eta_path = "hf://israel-adewuyi/gradients/gradients/0.5B_AS_grad_148.pt"
+# orthogonalize_paths = true
+# orthogonalized_subdir = "grads"
+# orthogonalized_suffix = "orth"
 
