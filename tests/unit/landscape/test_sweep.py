@@ -64,10 +64,23 @@ class _Harness:
                 "elapsed_reward_s": 0.01,
             }
 
-        def fake_compute_eval_loss(_model, _micro_batches, _loss_config, _parallel_dims, _device, eval_tag=None):
+        def fake_compute_eval_loss(
+            _model,
+            _micro_batches,
+            _loss_config,
+            _clip_epsilon,
+            _parallel_dims,
+            _device,
+            eval_tag=None,
+        ):
             _ = eval_tag
             self.calls["loss"] += 1
-            return 1.0 + self.calls["loss"], {"loss_mismatch_kl_mean": 0.01 * self.calls["loss"]}
+            return {
+                "loss_masked": 1.0 + self.calls["loss"],
+                "loss_vanilla": 2.0 + self.calls["loss"],
+                "loss_clipped": 3.0 + self.calls["loss"],
+                "loss_shared_mismatch_kl_mean": 0.01 * self.calls["loss"],
+            }
 
         def fake_append_result(_path: Path, row: dict) -> None:
             self.rows.append(dict(row))
@@ -97,6 +110,7 @@ class _Harness:
         sweep = SimpleNamespace(
             grid=grid,
             eval_mode=mode,
+            loss_compare=SimpleNamespace(clip_epsilon=0.2),
             weights_dir=Path("weights"),
             results_file=Path("landscape.csv"),
         )
@@ -135,7 +149,10 @@ def test_run_sweep_loss_fixed_batch_mode(monkeypatch) -> None:
     assert len(harness.rows) == 2
     assert harness.pool.stopped
     for row in harness.rows:
-        assert row["loss"] is not None
+        assert row["loss_masked"] is not None
+        assert row["loss_vanilla"] is not None
+        assert row["loss_clipped"] is not None
+        assert "loss" not in row
         assert row["reward_mean"] is None
         assert row["reward_old_mean"] == 0.5
         assert row["reward_old_std"] == 0.1
@@ -146,7 +163,7 @@ def test_run_sweep_loss_fixed_batch_mode(monkeypatch) -> None:
         assert row["adv_old_abs_mean"] == 0.5
         assert row["adv_old_nonzero_frac"] == 0.75
         assert row["loss_mask_old_true_frac"] == 0.4
-        assert row["loss_mismatch_kl_mean"] is not None
+        assert row["loss_shared_mismatch_kl_mean"] is not None
         assert row["eval_mode"] == "loss_fixed_batch"
 
 
@@ -158,14 +175,16 @@ def test_run_sweep_reward_online_mode(monkeypatch) -> None:
     assert len(harness.rows) == 2
     assert harness.pool.stopped
     for row in harness.rows:
-        assert row["loss"] is None
+        assert row["loss_masked"] is None
+        assert row["loss_vanilla"] is None
+        assert row["loss_clipped"] is None
         assert row["reward_mean"] is not None
         assert row["reward_old_mean"] is None
         assert row["reward_old_std"] is None
         assert row["num_rollouts_old"] is None
         assert row["num_train_samples_old"] is None
         assert row["adv_old_mean"] is None
-        assert row["loss_mismatch_kl_mean"] is None
+        assert row["loss_shared_mismatch_kl_mean"] is None
         assert row["eval_mode"] == "reward_online"
 
 
@@ -177,12 +196,15 @@ def test_run_sweep_both_mode(monkeypatch) -> None:
     assert len(harness.rows) == 2
     assert harness.pool.stopped
     for row in harness.rows:
-        assert row["loss"] is not None
+        assert row["loss_masked"] is not None
+        assert row["loss_vanilla"] is not None
+        assert row["loss_clipped"] is not None
+        assert "loss" not in row
         assert row["reward_mean"] is not None
         assert row["reward_old_mean"] == 0.5
         assert row["reward_old_std"] == 0.1
         assert row["num_rollouts_old"] == 4
         assert row["num_train_samples_old"] == 7
         assert row["adv_old_mean"] == 0.25
-        assert row["loss_mismatch_kl_mean"] is not None
+        assert row["loss_shared_mismatch_kl_mean"] is not None
         assert row["eval_mode"] == "both"

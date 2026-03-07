@@ -67,9 +67,20 @@ class DirectionConfig(BaseConfig):
     ] = 1e-10
 
 
+class LossCompareConfig(BaseConfig):
+    clip_epsilon: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            description="Symmetric PPO-style clipping epsilon for landscape clipped-loss evaluation.",
+        ),
+    ] = 0.2
+
+
 class SweepConfig(BaseConfig):
     grid: GridConfig = GridConfig()
     direction: DirectionConfig = DirectionConfig()
+    loss_compare: LossCompareConfig = LossCompareConfig()
     eval_mode: Annotated[
         Literal["loss_fixed_batch", "reward_online", "both"],
         Field(

@@ -50,6 +50,9 @@ results_file = "d=AS_m=qwen-05B_s=50_alphabeta=0,05_size=25_batch=512_default_ma
 rollouts_file = "d=AS_m=qwen-05B_s=50_alphabeta=0,05_size=25_batch=512_default_mask.txt"
 eval_mode = "both"
 
+[sweep.loss_compare]
+clip_epsilon = 0.2
+
 [sweep.grid]
 alpha_min = -0.05
 alpha_max = 0.05

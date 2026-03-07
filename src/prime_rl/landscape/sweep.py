@@ -8,7 +8,7 @@ from transformers import AutoProcessor
 
 from prime_rl.landscape.config import LandscapeConfig
 from prime_rl.landscape.directions import apply_point, compute_parameter_delta_stats
-from prime_rl.landscape.eval_loss import LOSS_DIAGNOSTIC_COLUMNS, compute_eval_loss, micro_batch_to_tensor
+from prime_rl.landscape.eval_loss import LOSS_EVAL_COLUMNS, compute_eval_loss, micro_batch_to_tensor
 from prime_rl.landscape.io import append_result, append_sampled_prompts
 from prime_rl.landscape.weights import write_weights
 from prime_rl.orchestrator.advantage import compute_advantages
@@ -388,7 +388,6 @@ async def run_sweep(
             row = {
                 "alpha": point.alpha,
                 "beta": point.beta,
-                "loss": None,
                 "reward_mean": None,
                 "reward_std": None,
                 "num_rollouts": None,
@@ -407,21 +406,21 @@ async def run_sweep(
                 "elapsed_loss_s": None,
                 "elapsed_reward_s": None,
                 "elapsed_s": None,
-                **{key: None for key in LOSS_DIAGNOSTIC_COLUMNS},
+                **{key: None for key in LOSS_EVAL_COLUMNS},
             }
 
             if run_loss_fixed_batch:
                 assert fixed_old_batch is not None
                 loss_start = time.perf_counter()
-                loss, loss_diagnostics = compute_eval_loss(
+                loss_diagnostics = compute_eval_loss(
                     model,
                     fixed_old_batch.micro_batches,
                     config.trainer.loss,
+                    config.sweep.loss_compare.clip_epsilon,
                     parallel_dims,
                     compute_device,
                     eval_tag=f"alpha={point.alpha:.6f},beta={point.beta:.6f}",
                 )
-                row["loss"] = loss
                 row.update(loss_diagnostics)
                 row["elapsed_loss_s"] = time.perf_counter() - loss_start
 
@@ -445,9 +444,11 @@ async def run_sweep(
             append_result(results_path, row)
 
             summary = [f"alpha={point.alpha:.3f}", f"beta={point.beta:.3f}"]
-            if row["loss"] is not None:
-                summary.append(f"loss={row['loss']:.4f}")
-                summary.append(f"mismatch_kl={row['loss_mismatch_kl_mean']:.4f}")
+            if row["loss_masked"] is not None:
+                summary.append(f"loss_masked={row['loss_masked']:.4f}")
+                summary.append(f"loss_vanilla={row['loss_vanilla']:.4f}")
+                summary.append(f"loss_clipped={row['loss_clipped']:.4f}")
+                summary.append(f"mismatch_kl={row['loss_shared_mismatch_kl_mean']:.4f}")
             if row["reward_mean"] is not None:
                 summary.append(f"reward_mean={row['reward_mean']:.4f}")
             logger.info(" ".join(summary))

@@ -25,12 +25,18 @@ def test_landscape_rejects_inference_lora() -> None:
 def test_landscape_eval_mode_defaults_to_loss_fixed_batch() -> None:
     config = LandscapeConfig()
     assert config.sweep.eval_mode == "loss_fixed_batch"
+    assert config.sweep.loss_compare.clip_epsilon == 0.2
     assert config.trainer_gpu_ids == [0]
 
 
 def test_landscape_rejects_invalid_eval_mode() -> None:
     with pytest.raises(ValidationError):
         LandscapeConfig(sweep={"eval_mode": "invalid"})
+
+
+def test_landscape_rejects_negative_clip_epsilon() -> None:
+    with pytest.raises(ValidationError):
+        LandscapeConfig(sweep={"loss_compare": {"clip_epsilon": -0.1}})
 
 
 def test_landscape_rejects_empty_trainer_gpu_ids() -> None:
