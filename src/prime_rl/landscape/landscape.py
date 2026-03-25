@@ -1,7 +1,6 @@
 import asyncio
 import os
 import subprocess
-from pathlib import Path
 from subprocess import Popen
 
 import tomli_w
@@ -19,8 +18,8 @@ from prime_rl.landscape.directions import (
     log_per_tensor_norm_matching,
     orthogonalize_and_normalize_directions,
     prepare_direction_tensors,
-    save_direction_state_dict,
     sanity_check_restore_base,
+    save_direction_state_dict,
 )
 from prime_rl.landscape.io import write_metadata
 from prime_rl.landscape.sweep import run_sweep
@@ -118,7 +117,7 @@ def main() -> None:
 
     try:
         _configure_trainer_cuda_visible_devices(config, logger_obj)
-        _log_trainer_cuda_context(config, logger_obj, stage="pre_dist_init")
+        # _log_trainer_cuda_context(config, logger_obj, stage="pre_dist_init")
 
         logger_obj.info(f"Landscape using configured trainer.model.compile={config.trainer.model.compile}")
         logger_obj.info(
@@ -144,7 +143,7 @@ def main() -> None:
                 )
 
         setup_torch_distributed(enable_gloo=config.trainer.model.fsdp_cpu_offload)
-        _log_trainer_cuda_context(config, logger_obj, stage="post_dist_init")
+        # _log_trainer_cuda_context(config, logger_obj, stage="post_dist_init")
         torch.set_float32_matmul_precision("high")
 
         parallel_dims = get_parallel_dims(config.trainer.model)
@@ -155,9 +154,7 @@ def main() -> None:
 
         params = iter_named_parameters(model, config.sweep.direction.param_filter)
         num_floating_params = sum(1 for _, param in params if param.is_floating_point())
-        num_total_elements = sum(
-            get_local_tensor(param).numel() for _, param in params if param.is_floating_point()
-        )
+        num_total_elements = sum(get_local_tensor(param).numel() for _, param in params if param.is_floating_point())
         logger_obj.info(
             "Selected perturbation parameters: "
             f"filter={config.sweep.direction.param_filter} "
