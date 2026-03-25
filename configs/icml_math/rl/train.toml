@@ -1,0 +1,13 @@
+max_steps = 50
+
+[model]
+name = "allenai/Olmo-3-1025-7B"
+
+[optim]
+lr = 1e-4
+
+[wandb]
+platform = "tensorboard"
+project = "slimpeft_v3"
+name = "train_random_1"
+

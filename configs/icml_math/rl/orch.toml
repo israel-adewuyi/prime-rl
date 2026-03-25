@@ -1,0 +1,60 @@
+max_steps = 50
+batch_size = 512
+seq_len = 10240
+rollouts_per_example = 16
+mask_truncated_completions = false
+
+[model]
+name = "allenai/Olmo-3-1025-7B"
+
+[wandb]
+platform = "tensorboard"
+project = "slimpeft_v3"
+name = "orch_random_1"
+
+[env_mix]
+probabilities = [0.5, 0.5]
+
+[[env]]
+id = "skywork-math"
+args = { solve_rate_field = "solve_rate_qwen_r1_distill_7b", min_solve_rate = 0.01, max_solve_rate = 0.99 }
+name = "skywork"
+
+[[env]]
+id = "acereason-math"
+name = "acereason"
+
+[val]
+interval = 5
+num_examples = 32
+rollouts_per_example = 16
+
+[buffer]
+easy_fraction = 0.0
+hard_fraction = 0.0
+easy_threshold = 1.0
+hard_threshold = 0.0
+
+
+# [[env]]
+# id = "alphabet-sort"
+# args = { min_turns = 2, max_turns = 2 }
+
+[sampling]
+max_tokens = 128
+temperature = 0.8
+
+[wandb.log_extras]
+interval = 50
+
+[eval]
+interval = 10
+
+[[eval.env]]
+id = "aime2025"
+rollouts_per_example = 32
+# args = {"min_turns" = 2, "max_turns"= 2, "seed"= 2001}
+
+[eval.sampling]
+max_tokens = 8192
+temperature = 0.7
