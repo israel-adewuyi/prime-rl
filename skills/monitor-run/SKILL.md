@@ -73,7 +73,7 @@ Once you have the output directory, the resolved configs are at `{output_dir}/co
 
 ### Configs
 
-The launcher writes resolved configs as TOML files to `{output_dir}/configs/`. Read `rl.toml` to get the full picture of the experiment (model, envs, hyperparameters, wandb, deployment).
+The launcher writes resolved configs as TOML files to `{output_dir}/configs/`. Read `rl.toml` to get the full picture of the experiment (model, envs, hyperparameters, wandb, tensorboard, deployment).
 
 ### Logs
 

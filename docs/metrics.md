@@ -53,3 +53,24 @@ uv run rl  ... \
   --orchestrator.wandb.log-extras.interval 50
 ```
 
+## TensorBoard
+
+TensorBoard logging is also available for RL runs. Enable it with the top-level `tensorboard` config.
+
+```bash
+uv run rl ... --tensorboard
+```
+
+By default, RL writes event files under `<output_dir>/tensorboard/` using two run directories:
+
+- `train_<run_name>`
+- `orch_<run_name>`
+
+If you do not specify `tensorboard.run_name`, PRIME-RL uses the RL output directory name.
+
+```bash
+uv run rl ... --tensorboard.run_name my-run
+```
+
+TensorBoard logs scalars, sampled text outputs, eval samples, histograms for logged distributions, and a final summary JSON in each run directory.
+

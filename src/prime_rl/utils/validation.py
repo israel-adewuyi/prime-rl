@@ -84,6 +84,38 @@ def validate_shared_wandb_config(
             )
 
 
+def validate_shared_tensorboard_config(
+    trainer: TrainerConfig,
+    orchestrator: OrchestratorConfig,
+) -> None:
+    if trainer.tensorboard and not orchestrator.tensorboard:
+        raise ValueError(
+            "Trainer TensorBoard config is specified, but orchestrator TensorBoard config is not. "
+            "Please specify [orchestrator.tensorboard] as well, or use the top-level [tensorboard] config "
+            "to configure both at once."
+        )
+    if orchestrator.tensorboard and not trainer.tensorboard:
+        raise ValueError(
+            "Orchestrator TensorBoard config is specified, but trainer TensorBoard config is not. "
+            "Please specify [trainer.tensorboard] as well, or use the top-level [tensorboard] config "
+            "to configure both at once."
+        )
+    if trainer.tensorboard and orchestrator.tensorboard:
+        if trainer.tensorboard.run_name != orchestrator.tensorboard.run_name:
+            raise ValueError(
+                "Trainer and orchestrator TensorBoard run names must match so RL logging resolves to "
+                "`train_<run_name>` and `orch_<run_name>` under the same experiment."
+            )
+        if (
+            trainer.tensorboard.log_dir is not None
+            and orchestrator.tensorboard.log_dir is not None
+            and trainer.tensorboard.log_dir != orchestrator.tensorboard.log_dir
+        ):
+            raise ValueError(
+                "Trainer and orchestrator TensorBoard log directories must match when both are explicitly set."
+            )
+
+
 def validate_shared_max_steps(
     trainer: TrainerConfig,
     orchestrator: OrchestratorConfig,

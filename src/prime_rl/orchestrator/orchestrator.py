@@ -150,13 +150,18 @@ async def orchestrate(config: OrchestratorConfig):
         )
 
     # Setup monitor
-    logger.info(f"Initializing monitor (wandb={config.wandb}, prime_monitor={config.prime_monitor})")
+    logger.info(
+        f"Initializing monitor (wandb={config.wandb}, prime_monitor={config.prime_monitor}, "
+        f"tensorboard={config.tensorboard})"
+    )
     monitor = setup_monitor(
         wandb_config=config.wandb,
         prime_config=config.prime_monitor,
+        tensorboard_config=config.tensorboard,
         output_dir=config.output_dir,
         tokenizer=tokenizer,
         run_config=config,
+        process_name="orch",
     )
 
     # Setup heartbeat (only on rank 0, orchestrator is single process)
@@ -918,6 +923,8 @@ async def orchestrate(config: OrchestratorConfig):
     # Optionally, print benchmark table
     if config.bench:
         print_benchmark(to_col_format(monitor.history))
+
+    monitor.close()
 
 
 def main():

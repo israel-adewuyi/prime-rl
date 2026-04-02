@@ -19,6 +19,7 @@ from prime_rl.configs.orchestrator import (
 )
 from prime_rl.configs.shared import (
     SlurmConfig,
+    TensorBoardConfig,
     VLMConfig,
     WandbConfig,
     WandbWithExtrasConfig,
@@ -45,6 +46,7 @@ from prime_rl.utils.validation import (
     validate_shared_max_steps,
     validate_shared_model_name,
     validate_shared_output_dir,
+    validate_shared_tensorboard_config,
     validate_shared_wandb_config,
     validate_shared_weight_broadcast,
 )
@@ -278,6 +280,14 @@ class RLConfig(BaseConfig):
         SharedWandbConfig | None,
         Field(
             description="Shared W&B configs. If None, will fallback to the W&B configs specified on submodule configs."
+        ),
+    ] = None
+
+    tensorboard: Annotated[
+        TensorBoardConfig | None,
+        Field(
+            description="Shared TensorBoard config. If set, configures both trainer and orchestrator "
+            "to write to `<log_dir>/train_<run_name>` and `<log_dir>/orch_<run_name>`.",
         ),
     ] = None
 
@@ -516,6 +526,36 @@ class RLConfig(BaseConfig):
         if self.orchestrator.prime_monitor is not None and self.orchestrator.prime_monitor.run_name is None:
             if self.wandb and self.wandb.name:
                 self.orchestrator.prime_monitor.run_name = self.wandb.name
+
+        return self
+
+    @model_validator(mode="after")
+    def auto_setup_tensorboard(self):
+        """Auto-setup shared TensorBoard config for trainer and orchestrator."""
+        if self.tensorboard is not None:
+            if self.trainer.tensorboard is None:
+                self.trainer.tensorboard = TensorBoardConfig()
+            if self.orchestrator.tensorboard is None:
+                self.orchestrator.tensorboard = TensorBoardConfig()
+
+            run_name = self.tensorboard.run_name or self.output_dir.name
+            log_dir = self.tensorboard.log_dir or self.output_dir / "tensorboard"
+
+            self.tensorboard.run_name = run_name
+            self.tensorboard.log_dir = log_dir
+
+            for component_config in (self.trainer.tensorboard, self.orchestrator.tensorboard):
+                component_config.run_name = run_name
+                component_config.log_dir = log_dir
+                component_config.flush_secs = self.tensorboard.flush_secs
+                component_config.max_queue = self.tensorboard.max_queue
+                component_config.log_extras = (
+                    self.tensorboard.log_extras.model_copy(deep=True)
+                    if self.tensorboard.log_extras is not None
+                    else None
+                )
+
+        validate_shared_tensorboard_config(self.trainer, self.orchestrator)
 
         return self
 

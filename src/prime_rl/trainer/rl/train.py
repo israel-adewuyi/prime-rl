@@ -81,8 +81,14 @@ def train(config: TrainerConfig):
         logger.warning(f"Running in benchmark mode (max_steps={config.max_steps})")
 
     # Setup the monitor
-    logger.info(f"Initializing monitor ({config.wandb})")
-    monitor = setup_monitor(config.wandb, output_dir=config.output_dir, run_config=config)
+    logger.info(f"Initializing monitor (wandb={config.wandb}, tensorboard={config.tensorboard})")
+    monitor = setup_monitor(
+        config.wandb,
+        output_dir=config.output_dir,
+        run_config=config,
+        tensorboard_config=config.tensorboard,
+        process_name="train",
+    )
 
     # Setup heartbeat (only on rank 0)
     heart = None
@@ -640,6 +646,8 @@ def train(config: TrainerConfig):
         if config.bench.output_json:
             export_benchmark_json(history, config.bench.output_json)
             logger.info(f"Benchmark results written to {config.bench.output_json}")
+
+    monitor.close()
 
 
 def main():

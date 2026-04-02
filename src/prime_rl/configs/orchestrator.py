@@ -10,6 +10,7 @@ from prime_rl.configs.shared import (
     HeartbeatConfig,
     LogConfig,
     PrimeMonitorConfig,
+    TensorBoardConfig,
     TransportConfig,
     WandbWithExtrasConfig,
 )
@@ -766,6 +767,9 @@ class OrchestratorConfig(BaseConfig):
     # The prime monitor configuration
     prime_monitor: PrimeMonitorConfig | None = None
 
+    # The TensorBoard configuration
+    tensorboard: TensorBoardConfig | None = None
+
     # The checkpoint configuration
     ckpt: CheckpointConfig | None = None
 
@@ -1015,6 +1019,8 @@ class OrchestratorConfig(BaseConfig):
                 self.wandb.log_extras = None
             if self.prime_monitor:
                 self.prime_monitor.log_extras = None
+            if self.tensorboard:
+                self.tensorboard.log_extras = None
 
         return self
 

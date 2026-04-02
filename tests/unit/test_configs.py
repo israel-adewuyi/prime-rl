@@ -159,3 +159,35 @@ def test_removed_fused_lm_head_chunk_size_field_is_rejected():
 def test_selective_activation_checkpointing_requires_custom_impl():
     with pytest.raises(ValidationError, match="Selective activation checkpointing requires model.impl='custom'"):
         TrainerModelConfig.model_validate({"impl": "hf", "ac": {"mode": "selective"}})
+
+
+def test_rl_shared_tensorboard_auto_setup():
+    config = RLConfig.model_validate(
+        {
+            "output_dir": "outputs/tb-run",
+            "trainer": {},
+            "orchestrator": {},
+            "tensorboard": {},
+        }
+    )
+
+    expected_log_dir = Path("outputs/tb-run") / "tensorboard"
+    assert config.tensorboard is not None
+    assert config.tensorboard.run_name == "tb-run"
+    assert config.tensorboard.log_dir == expected_log_dir
+    assert config.trainer.tensorboard is not None
+    assert config.trainer.tensorboard.run_name == "tb-run"
+    assert config.trainer.tensorboard.log_dir == expected_log_dir
+    assert config.orchestrator.tensorboard is not None
+    assert config.orchestrator.tensorboard.run_name == "tb-run"
+    assert config.orchestrator.tensorboard.log_dir == expected_log_dir
+
+
+def test_rl_tensorboard_requires_both_trainer_and_orchestrator():
+    with pytest.raises(ValidationError, match="Trainer TensorBoard config is specified"):
+        RLConfig.model_validate(
+            {
+                "trainer": {"tensorboard": {}},
+                "orchestrator": {},
+            }
+        )

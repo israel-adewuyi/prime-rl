@@ -414,6 +414,50 @@ class PrimeMonitorConfig(BaseConfig):
     ] = None
 
 
+class TensorBoardConfig(BaseConfig):
+    """Configures logging to TensorBoard."""
+
+    run_name: Annotated[
+        str | None,
+        Field(
+            description="Base run name for TensorBoard event directories. RL logging uses "
+            "`train_<run_name>` and `orch_<run_name>`.",
+        ),
+    ] = None
+
+    log_dir: Annotated[
+        Path | None,
+        Field(
+            description="Parent directory for TensorBoard event files. If None, defaults to "
+            "`<output_dir>/tensorboard` for standalone trainer/orchestrator runs and to "
+            "`<rl.output_dir>/tensorboard` when using the RL entrypoint.",
+        ),
+    ] = None
+
+    flush_secs: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="How often, in seconds, to flush TensorBoard events to disk.",
+        ),
+    ] = 30
+
+    max_queue: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Maximum number of pending TensorBoard events before forcing a flush.",
+        ),
+    ] = 10
+
+    log_extras: Annotated[
+        LogExtrasConfig | None,
+        Field(
+            description="Configuration for logging extras. If None, only scalar metrics are logged.",
+        ),
+    ] = LogExtrasConfig()
+
+
 class HeartbeatConfig(BaseConfig):
     """Configures the heartbeat for BetterStack."""
 
