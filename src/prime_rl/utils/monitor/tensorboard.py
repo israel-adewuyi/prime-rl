@@ -4,6 +4,7 @@ from numbers import Number
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import verifiers as vf
 from transformers.tokenization_utils import PreTrainedTokenizer
 
@@ -236,7 +237,7 @@ class TensorBoardMonitor(Monitor):
         for key, values in distributions.items():
             if not values:
                 continue
-            self.writer.add_histogram(key, values, global_step=step)
+            self.writer.add_histogram(key, np.asarray(values, dtype=float), global_step=step)
 
     def close(self) -> None:
         if not self.is_master or not self.enabled:
