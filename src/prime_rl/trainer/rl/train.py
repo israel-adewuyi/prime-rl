@@ -12,6 +12,7 @@ import torch
 import torch.distributed as dist
 from torch.profiler import profile, ProfilerActivity, record_function
 from prime_rl.trainer.ckpt import setup_ckpt_managers
+from prime_rl.trainer.hf_artifacts import HFArtifactsManager
 from prime_rl.trainer.multi_ckpt import setup_multi_checkpoint_manager
 from prime_rl.trainer.optim import setup_optimizer, setup_multi_optimizer
 from prime_rl.trainer.scheduler import setup_scheduler, setup_multi_scheduler
@@ -55,6 +56,7 @@ from prime_rl.trainer.utils import (
 )
 from prime_rl.trainer.world import get_world
 from prime_rl.trainer.runs import setup_multi_run_manager, Progress, get_multi_run_manager
+from prime_rl.trainer.weights import gather_grads_on_master, gather_trainable_weights_on_master
 from prime_rl.trainer.models.layers.lora import set_lora_num_tokens
 from prime_rl.utils.heartbeat import Heartbeat
 from prime_rl.utils.metrics_server import HealthServer, MetricsServer, RunStats
@@ -108,6 +110,8 @@ def train(config: TrainerConfig):
             logger.info(f"Initializing health server on port {config.metrics_server.port}")
             health_server = HealthServer(config.metrics_server.port, config.metrics_server.host)
             health_server.start()
+
+    hf_artifacts_manager = HFArtifactsManager(config.hf_artifacts) if config.hf_artifacts is not None else None
 
     # Set precision
     setup_torch_distributed(
@@ -476,6 +480,12 @@ def train(config: TrainerConfig):
         if grad_norm.device.type == "cpu":
             grad_norm = grad_norm.to(torch.device("cuda"))
         zero_grad_ratio = get_zero_gradient_ratio(model.parameters(), parallel_dims.dp_replicate)
+        save_hf_artifacts = (
+            hf_artifacts_manager is not None and config.max_concurrent_runs == 1 and (progress.step + 1) % config.hf_artifacts.interval == 0
+        )
+        if save_hf_artifacts:
+            pre_weights = gather_trainable_weights_on_master(model, world.is_master)
+            grads = gather_grads_on_master(model, world.is_master)
 
         # Update the model parameters
         optimizer.step()
@@ -489,6 +499,9 @@ def train(config: TrainerConfig):
         else:
             current_lr = optimizer.get_current_lr()
         forward_backward_time = time.perf_counter() - forward_backward_start_time
+        if save_hf_artifacts:
+            logger.info(f"Uploading HF artifacts at step {progress.step + 1}")
+            hf_artifacts_manager.save(progress.step + 1, model, pre_weights, grads)
 
         # Optionally, dump memory snapshot
         if memory_profiler is not None:

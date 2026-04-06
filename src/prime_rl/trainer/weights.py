@@ -126,7 +126,7 @@ def save_state_dict(
 
 
 def gather_weights_on_master(
-    model: nn.Module, is_master: bool, dtype: torch.dtype = torch.bfloat16
+    model: nn.Module, is_master: bool, dtype: torch.dtype | None = torch.bfloat16
 ) -> dict[str, Tensor]:
     """Gather distributed weights on CPU on master rank."""
     with warnings.catch_warnings():
@@ -137,7 +137,7 @@ def gather_weights_on_master(
         for key, value in model.state_dict().items():
             if isinstance(value, DTensor):
                 # only gather after the downcast to dtype as it will be faster
-                value = cast(DTensor, value.to(dtype)).full_tensor()
+                value = cast(DTensor, value.to(dtype)).full_tensor() if dtype is not None else value.full_tensor()
 
             if is_master:
                 key = get_fqns(model, key)
@@ -151,6 +151,37 @@ def gather_weights_on_master(
     if any(".base_layer." in key or "lora_A" in key or "lora_B" in key for key in cpu_state.keys()):
         cpu_state = clean_lora_state_dict(cpu_state)
 
+    return cpu_state
+
+
+def gather_trainable_weights_on_master(model: nn.Module, is_master: bool) -> dict[str, Tensor]:
+    """Gather trainable parameters on CPU on master rank."""
+    cpu_state = {}
+    for key, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if is_master:
+            cpu_state[next(iter(get_fqns(model, _strip_pytorch_wrapper_prefix(key))))] = param.detach().to(
+                "cpu", non_blocking=False
+            )
+    torch.distributed.barrier()
+    return cpu_state
+
+
+def gather_grads_on_master(model: nn.Module, is_master: bool) -> dict[str, Tensor]:
+    """Gather trainable gradients on CPU on master rank."""
+    cpu_state = {}
+    for key, param in model.named_parameters():
+        if not param.requires_grad or param.grad is None:
+            continue
+        grad = param.grad
+        if isinstance(grad, DTensor):
+            grad = grad.full_tensor()
+        if is_master:
+            cpu_state[next(iter(get_fqns(model, _strip_pytorch_wrapper_prefix(key))))] = grad.detach().to(
+                "cpu", non_blocking=False
+            )
+    torch.distributed.barrier()
     return cpu_state
 
 

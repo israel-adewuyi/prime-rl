@@ -168,6 +168,14 @@ In TOML, an empty section header does the same:
 [ckpt]  # enables checkpointing with defaults
 ```
 
+To upload RL step artifacts to Hugging Face Hub, add:
+
+```toml
+[hf_artifacts]
+interval = 100
+repo_id = "your-org/your-repo"
+```
+
 ## Key files
 
 - `src/prime_rl/utils/config.py` — re-exports `BaseConfig` and `cli` from pydantic_config

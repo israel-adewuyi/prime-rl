@@ -631,6 +631,13 @@ class CheckpointConfig(BaseConfig):
     ] = False
 
 
+class HFArtifactsConfig(BaseConfig):
+    """Configures synchronous uploads of weights, gradients, and deltas to the Hugging Face Hub."""
+
+    interval: Annotated[int, Field(ge=1, description="Upload weights, gradients, and deltas every N steps.")] = 100
+    repo_id: Annotated[str, Field(description="Hugging Face dataset repo to upload step artifacts to.")]
+
+
 class DefaultLossConfig(BaseModel):
     """Config for the default loss."""
 
@@ -740,6 +747,8 @@ class TrainerConfig(BaseConfig):
 
     # The checkpoint configuration
     ckpt: CheckpointConfig | None = None
+
+    hf_artifacts: HFArtifactsConfig | None = None
 
     weight_broadcast: WeightBroadcastConfig = FileSystemWeightBroadcastConfig()
 
@@ -880,6 +889,12 @@ class TrainerConfig(BaseConfig):
     def validate_weight_broadcast_type(self):
         if self.weight_broadcast.type == "nccl" and self.max_async_level != 1:
             raise ValueError("NCCL weight broadcast only works with async level 1")
+        return self
+
+    @model_validator(mode="after")
+    def validate_hf_artifacts_single_run(self):
+        if self.hf_artifacts is not None and self.max_concurrent_runs > 1:
+            raise ValueError("hf_artifacts is only supported with max_concurrent_runs = 1")
         return self
 
     @model_validator(mode="after")
