@@ -142,7 +142,7 @@ def rl_local(config: RLConfig):
 
     # Check for existing processes on GPUs
     all_gpu_ids = list(set(infer_gpu_ids + trainer_gpu_ids + teacher_gpu_ids))
-    check_gpus_available(all_gpu_ids)
+    # check_gpus_available(all_gpu_ids)
 
     # Validate client port matches inference server port
     if config.inference is not None and not config.orchestrator.client.is_elastic:

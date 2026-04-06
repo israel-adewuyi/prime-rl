@@ -1,13 +1,13 @@
-max_steps = 100
-seq_len = 2048
+max_steps = 150
+seq_len = 4096
+clean_output_dir = true
 
-[wandb]
-project = "alphabet-sort-debug"
-name = "alphabet-sort"
-
+[tensorboard]
+log_dir = "TB_Logs"
+run_name = "demo_first_run_lr=1e6"
 
 [model]
-name = "Qwen/Qwen3-4B-Instruct-2507"
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [orchestrator]
 batch_size = 512
@@ -21,6 +21,11 @@ id = "alphabet-sort"
 name = "alphabet-sort"
 args = { min_turns = 2, max_turns = 2 }
 
-[trainer]
+[trainer.optim]
+lr = 1e-6
+
+[trainer.hf_artifacts]
+interval = 25
+repo_id = "israel-adewuyi/artifacts_Qwen-0.5B_alphabet-sort"
 
 [inference]
