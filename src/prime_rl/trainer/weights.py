@@ -160,10 +160,11 @@ def gather_trainable_weights_on_master(model: nn.Module, is_master: bool) -> dic
     for key, param in model.named_parameters():
         if not param.requires_grad:
             continue
+        value = param.detach()
+        if isinstance(value, DTensor):
+            value = value.full_tensor()
         if is_master:
-            cpu_state[next(iter(get_fqns(model, _strip_pytorch_wrapper_prefix(key))))] = param.detach().to(
-                "cpu", non_blocking=False
-            )
+            cpu_state[next(iter(get_fqns(model, _strip_pytorch_wrapper_prefix(key))))] = value.to("cpu", non_blocking=False)
     torch.distributed.barrier()
     return cpu_state
 
