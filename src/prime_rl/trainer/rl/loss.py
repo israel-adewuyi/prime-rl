@@ -6,7 +6,7 @@ from beartype import beartype as typechecker
 from jaxtyping import Bool, Float, Int, jaxtyped
 from torch import Tensor
 
-from prime_rl.configs.trainer import CustomLossConfig, DefaultLossConfig, LossConfig, SFTLossConfig
+from prime_rl.configs.trainer import CustomLossConfig, DefaultLossConfig, GRPOLossConfig, LossConfig, SFTLossConfig
 from prime_rl.utils.utils import import_object
 
 
@@ -163,6 +163,20 @@ def default_loss_fn(inputs: LossInputs, loss_config: DefaultLossConfig) -> LossO
     return LossOutputs(loss=loss, metrics=metrics)
 
 
+def grpo_loss_fn(inputs: LossInputs, loss_config: GRPOLossConfig) -> LossOutputs:
+    log_importance_ratio = inputs.trainer_logprobs - inputs.inference_logprobs
+    importance_ratio = torch.exp(log_importance_ratio)
+    clipped_ratio = torch.clamp(importance_ratio, 1 - loss_config.eps, 1 + loss_config.eps)
+    mismatch_kl = importance_ratio - log_importance_ratio - 1
+    surrogate = torch.minimum(importance_ratio * inputs.advantages, clipped_ratio * inputs.advantages)
+    loss = -_safe_mean(surrogate, inputs.loss_mask) + loss_config.beta * _safe_mean(mismatch_kl, inputs.loss_mask)
+    metrics = {
+        "mismatch_kl": _safe_mean(mismatch_kl, inputs.loss_mask),
+        "clip_frac": _safe_mean(importance_ratio != clipped_ratio, inputs.loss_mask),
+    }
+    return LossOutputs(loss=loss, metrics=metrics)
+
+
 def sft_loss_fn(inputs: LossInputs) -> LossOutputs:
     """SFT-style masked negative log-likelihood over trainable tokens."""
     trainer_logprobs = inputs.trainer_logprobs
@@ -188,6 +202,14 @@ def setup_loss_fn(loss_config: LossConfig) -> LossFn:
 
     if isinstance(loss_config, SFTLossConfig):
         return sft_loss_fn
+
+    if isinstance(loss_config, GRPOLossConfig):
+
+        def loss_fn(inputs: LossInputs) -> LossOutputs:
+            return grpo_loss_fn(inputs, loss_config)
+
+        loss_fn.aggregate_by = "sample"
+        return loss_fn
 
     def loss_fn(inputs: LossInputs) -> LossOutputs:
         return default_loss_fn(inputs, loss_config)
@@ -245,7 +267,8 @@ def compute_loss(
                 all_metrics[k] = []
             all_metrics[k].append(v)
 
-    scaled_loss = total_loss / loss_scale
+    aggregate_by = getattr(loss_fn, "aggregate_by", "token")
+    scaled_loss = total_loss / (max(len(trainer_logprobs), 1) if aggregate_by == "sample" else loss_scale)
 
     aggregated: dict[str, Any] = {}
     for k, v in all_metrics.items():

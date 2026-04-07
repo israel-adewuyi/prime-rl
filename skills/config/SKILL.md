@@ -145,6 +145,16 @@ type = "fake"
 batch_size = 2
 ```
 
+GRPO needs matching trainer loss and orchestrator advantage:
+
+```toml
+[trainer.loss]
+type = "grpo"
+
+[orchestrator.advantage]
+type = "grpo"
+```
+
 On the CLI:
 
 ```bash

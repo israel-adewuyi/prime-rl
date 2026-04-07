@@ -651,6 +651,14 @@ class DefaultLossConfig(BaseModel):
     kl_tau: Annotated[float, Field(ge=0, description="The tau for KL divergence.")] = 1e-3
 
 
+class GRPOLossConfig(BaseModel):
+    """Config for GRPO loss."""
+
+    type: Literal["grpo"] = "grpo"
+    eps: Annotated[float, Field(ge=0, description="Clipping epsilon for the importance ratio.")] = 0.2
+    beta: Annotated[float, Field(ge=0, description="KL penalty coefficient against the reference policy.")] = 0.0
+
+
 class SFTLossConfig(BaseModel):
     """Config for SFT-style masked negative log-likelihood loss."""
 
@@ -666,7 +674,9 @@ class CustomLossConfig(BaseModel):
     kwargs: Annotated[dict[str, Any], Field(default_factory=dict, description="Kwargs to pass to the loss function")]
 
 
-LossConfig: TypeAlias = Annotated[DefaultLossConfig | SFTLossConfig | CustomLossConfig, Field(discriminator="type")]
+LossConfig: TypeAlias = Annotated[
+    DefaultLossConfig | GRPOLossConfig | SFTLossConfig | CustomLossConfig, Field(discriminator="type")
+]
 
 
 class FakeDataLoaderConfig(BaseConfig):

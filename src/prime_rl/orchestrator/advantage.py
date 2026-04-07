@@ -5,7 +5,7 @@ import torch
 from jaxtyping import Float, Int
 from torch import Tensor
 
-from prime_rl.configs.orchestrator import AdvantageConfig, CustomAdvantageConfig
+from prime_rl.configs.orchestrator import AdvantageConfig, CustomAdvantageConfig, GRPOAdvantageConfig
 from prime_rl.utils.utils import import_object
 
 
@@ -33,21 +33,31 @@ Expected signature:
 """
 
 
-def default_advantage_fn(
-    inputs: AdvantageInputs,
-    length_shaping_alpha: float | None = None,
+def _maybe_shape_rewards(
+    rewards: Float[Tensor, "num_problems rollouts_per_example"],
+    completion_lengths: Int[Tensor, "num_problems rollouts_per_example"],
+    length_shaping_alpha: float | None,
+) -> Float[Tensor, "num_problems rollouts_per_example"]:
+    if length_shaping_alpha is None:
+        return rewards
+    completion_lengths = completion_lengths.to(dtype=rewards.dtype)
+    lengths_normalized = completion_lengths / completion_lengths.mean(dim=1, keepdim=True)
+    length_shaping = (1 + length_shaping_alpha * lengths_normalized) ** -1
+    return rewards * length_shaping
+
+
+def default_advantage_fn(inputs: AdvantageInputs, length_shaping_alpha: float | None = None) -> AdvantageOutputs:
+    """Default advantage: reward minus per-problem baseline."""
+    rewards = _maybe_shape_rewards(inputs.rewards, inputs.completion_lengths, length_shaping_alpha)
+    return AdvantageOutputs(advantages=rewards - rewards.mean(dim=1, keepdim=True))
+
+
+def grpo_advantage_fn(
+    inputs: AdvantageInputs, eps: float, length_shaping_alpha: float | None = None
 ) -> AdvantageOutputs:
-    """Default GRPO advantage: reward minus per-problem baseline."""
-    rewards = inputs.rewards
-
-    if length_shaping_alpha is not None:
-        completion_lengths = inputs.completion_lengths.to(dtype=rewards.dtype)
-        lengths_normalized = completion_lengths / completion_lengths.mean(dim=1, keepdim=True)
-        length_shaping = (1 + length_shaping_alpha * lengths_normalized) ** -1
-        rewards = rewards * length_shaping
-    baseline = rewards.mean(dim=1, keepdim=True)
-
-    return AdvantageOutputs(advantages=rewards - baseline)
+    rewards = _maybe_shape_rewards(inputs.rewards, inputs.completion_lengths, length_shaping_alpha)
+    centered = rewards - rewards.mean(dim=1, keepdim=True)
+    return AdvantageOutputs(advantages=centered / (rewards.std(dim=1, keepdim=True, unbiased=False) + eps))
 
 
 def setup_advantage_fn(config: AdvantageConfig) -> AdvantageFn:
@@ -61,11 +71,15 @@ def setup_advantage_fn(config: AdvantageConfig) -> AdvantageFn:
 
         return advantage_fn
 
+    if isinstance(config, GRPOAdvantageConfig):
+
+        def advantage_fn(inputs: AdvantageInputs) -> AdvantageOutputs:
+            return grpo_advantage_fn(inputs, eps=config.eps, length_shaping_alpha=config.length_shaping_alpha)
+
+        return advantage_fn
+
     def advantage_fn(inputs: AdvantageInputs) -> AdvantageOutputs:
-        return default_advantage_fn(
-            inputs,
-            length_shaping_alpha=config.length_shaping_alpha,
-        )
+        return default_advantage_fn(inputs, length_shaping_alpha=config.length_shaping_alpha)
 
     return advantage_fn
 

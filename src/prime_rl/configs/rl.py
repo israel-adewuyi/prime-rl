@@ -8,6 +8,7 @@ from prime_rl.configs.inference import WeightBroadcastConfig as InferenceWeightB
 from prime_rl.configs.orchestrator import (
     CheckpointConfig as OrchestratorCheckpointConfig,
 )
+from prime_rl.configs.orchestrator import GRPOAdvantageConfig
 from prime_rl.configs.orchestrator import (
     FileSystemWeightBroadcastConfig as OrchestratorFileSystemWeightBroadcastConfig,
 )
@@ -27,6 +28,7 @@ from prime_rl.configs.shared import (
 from prime_rl.configs.trainer import (
     BenchConfig,
     FakeDataLoaderConfig,
+    GRPOLossConfig,
     TrainerConfig,
 )
 from prime_rl.configs.trainer import (
@@ -724,6 +726,18 @@ class RLConfig(BaseConfig):
                     "make sure to set --enable_lora and --max-lora-rank."
                 )
 
+        return self
+
+    @model_validator(mode="after")
+    def auto_setup_grpo_advantage(self):
+        orchestrator_advantage_explicit = "advantage" in self.orchestrator.model_fields_set
+        if isinstance(self.trainer.loss, GRPOLossConfig):
+            if not orchestrator_advantage_explicit:
+                self.orchestrator.advantage = GRPOAdvantageConfig()
+            elif not isinstance(self.orchestrator.advantage, GRPOAdvantageConfig):
+                raise ValueError("trainer.loss.type='grpo' requires orchestrator.advantage.type='grpo'")
+        elif orchestrator_advantage_explicit and isinstance(self.orchestrator.advantage, GRPOAdvantageConfig):
+            raise ValueError("orchestrator.advantage.type='grpo' requires trainer.loss.type='grpo'")
         return self
 
     @model_validator(mode="after")

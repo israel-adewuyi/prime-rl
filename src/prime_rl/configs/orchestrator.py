@@ -558,7 +558,7 @@ class VerificationConfig(BaseConfig):
 
 
 class DefaultAdvantageConfig(BaseModel):
-    """Config for the default advantage."""
+    """Config for centered per-problem advantages."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -566,6 +566,19 @@ class DefaultAdvantageConfig(BaseModel):
     length_shaping_alpha: Annotated[
         float | None,
         Field(description="Penalty coefficient for Group Relative Reward Rescaling (GR³). Recommended value: 0.33"),
+    ] = None
+
+
+class GRPOAdvantageConfig(BaseModel):
+    """Config for GRPO-style standardized group-relative advantages."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["grpo"] = "grpo"
+    eps: Annotated[float, Field(gt=0, description="Epsilon added to the group std for numerical stability.")] = 1e-6
+    length_shaping_alpha: Annotated[
+        float | None,
+        Field(description="Penalty coefficient for Group Relative Reward Rescaling (GRÂ³). Recommended value: 0.33"),
     ] = None
 
 
@@ -582,7 +595,7 @@ class CustomAdvantageConfig(BaseModel):
 
 
 AdvantageConfig: TypeAlias = Annotated[
-    DefaultAdvantageConfig | CustomAdvantageConfig,
+    DefaultAdvantageConfig | GRPOAdvantageConfig | CustomAdvantageConfig,
     Field(discriminator="type"),
 ]
 
