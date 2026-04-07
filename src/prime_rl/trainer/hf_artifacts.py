@@ -27,7 +27,8 @@ class HFArtifactsManager:
             return
 
         delta = {key: post_weights[key] - pre_weights[key] for key in pre_weights}
-        step_path = f"steps/{step:06d}"
+        step_root = f"{self.config.algo}_steps" if self.config.algo else "steps"
+        step_path = f"{step_root}/{step:06d}"
         with tempfile.TemporaryDirectory(prefix="prime-rl-hf-") as tmp_dir:
             tmp_path = Path(tmp_dir)
             for name, state_dict in (("weights", post_weights), ("grad", grads), ("delta", delta)):

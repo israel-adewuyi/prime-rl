@@ -636,6 +636,7 @@ class HFArtifactsConfig(BaseConfig):
 
     interval: Annotated[int, Field(ge=1, description="Upload weights, gradients, and deltas every N steps.")] = 100
     repo_id: Annotated[str, Field(description="Hugging Face model repo to upload step artifacts to.")]
+    algo: Annotated[str | None, Field(description="Optional algorithm name used as the top-level HF path prefix.")] = None
 
 
 class DefaultLossConfig(BaseModel):

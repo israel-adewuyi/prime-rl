@@ -174,6 +174,7 @@ To upload RL step artifacts to Hugging Face Hub, add:
 [hf_artifacts]
 interval = 100
 repo_id = "your-org/your-repo"
+algo = "ppo"
 ```
 
 `hf_artifacts.repo_id` should point to a Hugging Face model repo.
