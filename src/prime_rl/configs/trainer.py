@@ -635,7 +635,7 @@ class HFArtifactsConfig(BaseConfig):
     """Configures synchronous uploads of weights, gradients, and deltas to the Hugging Face Hub."""
 
     interval: Annotated[int, Field(ge=1, description="Upload weights, gradients, and deltas every N steps.")] = 100
-    repo_id: Annotated[str, Field(description="Hugging Face dataset repo to upload step artifacts to.")]
+    repo_id: Annotated[str, Field(description="Hugging Face model repo to upload step artifacts to.")]
 
 
 class DefaultLossConfig(BaseModel):

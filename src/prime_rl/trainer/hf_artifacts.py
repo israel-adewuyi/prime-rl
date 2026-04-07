@@ -19,7 +19,7 @@ class HFArtifactsManager:
         self.logger = get_logger()
         self.world = get_world()
         if self.world.is_master:
-            self.api.create_repo(repo_id=config.repo_id, repo_type="dataset", exist_ok=True)
+            self.api.create_repo(repo_id=config.repo_id, repo_type="model", exist_ok=True)
 
     def save(self, step: int, model: nn.Module, pre_weights: dict[str, Tensor], grads: dict[str, Tensor]) -> None:
         post_weights = gather_weights_on_master(model, self.world.is_master, dtype=None)
@@ -37,7 +37,7 @@ class HFArtifactsManager:
                     folder_path=str(artifact_dir),
                     path_in_repo=f"{step_path}/{name}",
                     repo_id=self.config.repo_id,
-                    repo_type="dataset",
+                    repo_type="model",
                     commit_message=f"Upload {name} for step {step}",
                 )
                 shutil.rmtree(artifact_dir)
@@ -48,7 +48,7 @@ class HFArtifactsManager:
                 path_or_fileobj=str(meta_path),
                 path_in_repo=f"{step_path}/meta.json",
                 repo_id=self.config.repo_id,
-                repo_type="dataset",
+                repo_type="model",
                 commit_message=f"Upload metadata for step {step}",
             )
 
@@ -58,7 +58,7 @@ class HFArtifactsManager:
                 path_or_fileobj=str(complete_path),
                 path_in_repo=f"{step_path}/COMPLETE",
                 repo_id=self.config.repo_id,
-                repo_type="dataset",
+                repo_type="model",
                 commit_message=f"Mark step {step} complete",
             )
             self.logger.info(f"Uploaded HF artifacts for step {step} to {self.config.repo_id}")

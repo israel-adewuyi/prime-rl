@@ -176,6 +176,8 @@ interval = 100
 repo_id = "your-org/your-repo"
 ```
 
+`hf_artifacts.repo_id` should point to a Hugging Face model repo.
+
 ## Key files
 
 - `src/prime_rl/utils/config.py` — re-exports `BaseConfig` and `cli` from pydantic_config
