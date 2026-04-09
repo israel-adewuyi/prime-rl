@@ -2,9 +2,12 @@ max_steps = 150
 seq_len = 4096
 clean_output_dir = true
 
+[tensorboard.log_extras]
+interval = 30
+
 [tensorboard]
 log_dir = "TB_Logs"
-run_name = "demo_first_run_lr=1e6"
+run_name = "AS_grpo_lr=3e6_third_run"
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -21,11 +24,32 @@ id = "alphabet-sort"
 name = "alphabet-sort"
 args = { min_turns = 2, max_turns = 2 }
 
-[trainer.optim]
-lr = 1e-6
+[orchestrator.eval]
+interval = 10
 
-[trainer.hf_artifacts]
-interval = 25
-repo_id = "israel-adewuyi/artifacts_Qwen-0.5B_alphabet-sort"
+[orchestrator.eval.sampling]
+max_tokens = 256
+
+[[orchestrator.eval.env]]
+id = "alphabet-sort"
+name = "alphabet-sort-eval"
+args = { min_turns = 2, max_turns = 2 }
+num_examples = 256
+rollouts_per_example = 4
+
+[trainer.optim]
+lr = 3e-6
+
+[trainer.loss]
+type = "grpo"
+eps = 0.2
+beta = 0.0
+
+[orchestrator.advantage]
+type = "grpo"
+eps = 1e-8
+
+[trainer.tokenizer]
+name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [inference]
