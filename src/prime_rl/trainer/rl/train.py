@@ -325,12 +325,6 @@ def train(config: TrainerConfig):
         # Normalize by the local number of unmasked tokens in the batch (per-batch length normalization)
         loss_scale = sum(micro_batch["loss_mask"].sum().item() for micro_batch in micro_batches)
         loss_scale = max(loss_scale, 1)
-        sample_scale = sum(
-            sum(split_mask.any().item() for split_mask in micro_batch["loss_mask"].squeeze(0).split(response_lengths))
-            for micro_batch in micro_batches
-            for response_lengths in [get_response_lengths(micro_batch["position_ids"])]
-        )
-        sample_scale = max(sample_scale, 1)
 
         logger.debug(f"Starting forward and backward pass ({batch_size=})")
         tensors = Tensors()  # Used to accumulate tensor statistics across micro-batches and ranks for logging
@@ -449,7 +443,6 @@ def train(config: TrainerConfig):
                 loss_mask=loss_mask.squeeze().split(response_lengths),
                 loss_fn=loss_fn,
                 loss_scale=loss_scale,
-                sample_scale=sample_scale,
             )
 
             # Backward pass

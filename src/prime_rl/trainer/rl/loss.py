@@ -225,7 +225,6 @@ def compute_loss(
     loss_mask: list[Bool[Tensor, " seq_i"]],
     loss_fn: LossFn,
     loss_scale: int,
-    sample_scale: int | None = None,
 ) -> tuple[Float[Tensor, ""], dict[str, Any]]:
     """
     Compute loss for packed sequences (batch size = 1, multiple sequences packed along sequence dimension).
@@ -237,8 +236,7 @@ def compute_loss(
         advantages: Advantages for each sequence
         loss_mask: Loss mask for each sequence
         loss_fn: Per-sequence loss function
-        loss_scale: Scale factor to normalize token-aggregated losses
-        sample_scale: Scale factor to normalize sample-aggregated losses
+        loss_scale: Scale factor to normalize the loss
 
     Returns:
         Tuple of (scaled_loss, aggregated_metrics)
@@ -269,11 +267,7 @@ def compute_loss(
                 all_metrics[k] = []
             all_metrics[k].append(v)
 
-    aggregate_by = getattr(loss_fn, "aggregate_by", "token")
-    if aggregate_by == "sample":
-        scaled_loss = total_loss / sample_scale
-    else:
-        scaled_loss = total_loss / loss_scale
+    scaled_loss = total_loss / loss_scale
 
     aggregated: dict[str, Any] = {}
     for k, v in all_metrics.items():
