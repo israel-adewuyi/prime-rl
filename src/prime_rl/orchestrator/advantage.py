@@ -13,11 +13,15 @@ def compute_advantage(
     """
     Computes advantages for a single group.
     """
-    if advantage_config.length_weighted_mean:
+    if advantage_config.type == "grpo":
+        centered = rewards - rewards.mean()
+        advantages = centered / (rewards.std(unbiased=False) + advantage_config.eps)
+    elif advantage_config.length_weighted_mean:
         baseline = (rewards * lengths).sum() / lengths.sum()
+        advantages = rewards - baseline
     else:
         baseline = rewards.mean()
-    advantages = rewards - baseline
+        advantages = rewards - baseline
     return advantages
 
 

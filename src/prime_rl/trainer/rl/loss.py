@@ -37,6 +37,11 @@ def shift_logits(logits: Float[Tensor, "batch seq vocab"]) -> Float[Tensor, "bat
     return logits
 
 
+def _safe_mean(values: Tensor, mask: Tensor) -> Tensor:
+    denom = torch.clamp_min(mask.sum(), 1)
+    return values[mask].sum() / denom
+
+
 def compute_loss(
     trainer_logprobs: Any,  # list of Float[Tensor, "seq_i"] with potentially different seq_i lengths
     inference_logprobs: Any,  # list of Float[Tensor, "seq_i"] with potentially different seq_i lengths
@@ -68,11 +73,31 @@ def compute_loss(
     total_is_masked_low = []
     total_is_masked_high = []
     total_sequence_masked_low = []
+    total_clip_frac = []
 
     for trainer_logprobs, inference_logprobs, advantages, loss_mask in zip(
         trainer_logprobs, inference_logprobs, advantages, loss_mask
     ):
         log_importance_ratio = trainer_logprobs - inference_logprobs
+
+        if loss_config.type == "grpo":
+            importance_ratio = torch.exp(log_importance_ratio)
+            clipped_ratio = torch.clamp(importance_ratio, 1 - loss_config.clip_eps, 1 + loss_config.clip_eps)
+            surrogate = torch.minimum(importance_ratio * advantages, clipped_ratio * advantages)
+            token_mismatch_kl = torch.exp(log_importance_ratio) - log_importance_ratio - 1
+            total_loss = total_loss - surrogate[loss_mask].sum()
+            mismatch_kl = _safe_mean(token_mismatch_kl, loss_mask)
+            is_clipped = (importance_ratio < 1 - loss_config.clip_eps) | (importance_ratio > 1 + loss_config.clip_eps)
+            clip_mask = is_clipped[loss_mask]
+            total_mismatch_kl.append(mismatch_kl)
+            total_masked_mismatch_kl.append(_safe_mean(token_mismatch_kl, loss_mask & is_clipped))
+            total_unmasked_mismatch_kl.append(_safe_mean(token_mismatch_kl, loss_mask & ~is_clipped))
+            total_is_masked.append(clip_mask.float())
+            total_is_masked_low.append((importance_ratio[loss_mask] < 1 - loss_config.clip_eps).float())
+            total_is_masked_high.append((importance_ratio[loss_mask] > 1 + loss_config.clip_eps).float())
+            total_sequence_masked_low.append(torch.tensor(0.0, device=trainer_logprobs.device))
+            total_clip_frac.append(clip_mask.float())
+            continue
 
         # Compute trainer-inference mismatch KL
         token_mismatch_kl = torch.exp(log_importance_ratio) - log_importance_ratio - 1
@@ -125,7 +150,7 @@ def compute_loss(
     # Apply loss scaling
     scaled_loss = total_loss / loss_scale
 
-    return scaled_loss, {
+    loss_tensors = {
         "mismatch_kl": torch.stack(total_mismatch_kl),
         "masked_mismatch_kl": torch.stack(total_masked_mismatch_kl),
         "unmasked_mismatch_kl": torch.stack(total_unmasked_mismatch_kl),
@@ -134,3 +159,6 @@ def compute_loss(
         "is_masked_high": torch.cat(total_is_masked_high),
         "sequence_masked_low": torch.stack(total_sequence_masked_low),
     }
+    if total_clip_frac:
+        loss_tensors["clip_frac"] = torch.cat(total_clip_frac)
+    return scaled_loss, loss_tensors

@@ -19,6 +19,7 @@ from prime_rl.inference.config import WeightBroadcastConfig as InferenceWeightBr
 from prime_rl.orchestrator.config import CheckpointConfig as OrchestratorCheckpointConfig
 from prime_rl.orchestrator.config import FileSystemWeightBroadcastConfig as OrchestratorFileSystemWeightBroadcastConfig
 from prime_rl.orchestrator.config import NCCLWeightBroadcastConfig as OrchestratorNCCLWeightBroadcastConfig
+from prime_rl.orchestrator.config import AdvantageConfig
 from prime_rl.orchestrator.config import OrchestratorConfig
 from prime_rl.trainer.config import CheckpointConfig as TrainerCheckpointConfig
 from prime_rl.trainer.rl.config import FakeDataLoaderConfig
@@ -306,6 +307,18 @@ class RLConfig(BaseSettings):
 
         validate_shared_model_name(self.trainer, self.orchestrator, self.inference)
 
+        return self
+
+    @model_validator(mode="after")
+    def auto_setup_grpo_advantage(self):
+        orchestrator_advantage_explicit = "advantage" in self.orchestrator.model_fields_set
+        if self.trainer.loss.type == "grpo":
+            if not orchestrator_advantage_explicit:
+                self.orchestrator.advantage = AdvantageConfig(type="grpo")
+            elif self.orchestrator.advantage is not None and self.orchestrator.advantage.type != "grpo":
+                raise ValueError("trainer.loss.type='grpo' requires orchestrator.advantage.type='grpo'")
+        elif orchestrator_advantage_explicit and self.orchestrator.advantage is not None and self.orchestrator.advantage.type == "grpo":
+            raise ValueError("orchestrator.advantage.type='grpo' requires trainer.loss.type='grpo'")
         return self
 
     @model_validator(mode="after")

@@ -20,6 +20,7 @@ from prime_rl.utils.pydantic_config import BaseConfig, BaseSettings
 class LossConfig(BaseConfig):
     """Base config for loss."""
 
+    type: Annotated[Literal["default", "grpo"], Field(description="Loss type to use.")] = "default"
     ratio_type: Annotated[Literal["token", "sequence"], Field(description="Type of importance ratio to use.")] = "token"
 
     mask_ratio_high: Annotated[float, Field(ge=0)] = 8.0
@@ -35,6 +36,20 @@ class LossConfig(BaseConfig):
     ] = 0.0
     kl_tau: Annotated[float, Field(ge=0)] = 0.0
     kl_mask_type: Annotated[Literal["masked", "unmasked", "all"], Field(description="Type of KL mask to use.")] = "all"
+    clip_eps: Annotated[float, Field(ge=0, description="Clipping epsilon for the GRPO importance ratio.")] = 0.2
+    beta: Annotated[
+        float,
+        Field(ge=0, description="KL coefficient for GRPO. Requires reference logprobs, which are not wired on this branch."),
+    ] = 0.0
+
+    @model_validator(mode="after")
+    def validate_grpo_settings(self):
+        if self.type == "grpo":
+            if self.ratio_type != "token":
+                raise ValueError("GRPO requires loss.ratio_type='token'")
+            if self.beta != 0.0:
+                raise ValueError("GRPO beta > 0 is not supported on this branch because reference logprobs are not wired")
+        return self
 
 
 class FakeDataLoaderConfig(BaseConfig):

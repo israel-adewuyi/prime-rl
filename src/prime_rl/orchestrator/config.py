@@ -338,7 +338,17 @@ class BufferConfig(BaseConfig):
 
 
 class AdvantageConfig(BaseConfig):
+    type: Literal["default", "grpo"] = "default"
     length_weighted_mean: bool = False
+    eps: Annotated[float, Field(gt=0, description="Epsilon added to the group std for GRPO advantage normalization.")] = (
+        1e-6
+    )
+
+    @model_validator(mode="after")
+    def validate_grpo_settings(self):
+        if self.type == "grpo" and self.length_weighted_mean:
+            raise ValueError("GRPO advantage does not support length_weighted_mean")
+        return self
 
 
 class FileSystemWeightBroadcastConfig(BaseModel):

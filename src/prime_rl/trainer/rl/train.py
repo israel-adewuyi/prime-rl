@@ -215,7 +215,7 @@ def train(config: RLTrainerConfig):
         seq_len = micro_batches[0]["input_ids"].shape[1]
 
         # Normalize by the local number of unmasked tokens in the batch (per-batch length normalization)
-        if config.loss.ratio_type == "token":
+        if config.loss.type == "grpo" or config.loss.ratio_type == "token":
             loss_scale = sum(micro_batch["loss_mask"].sum().item() for micro_batch in micro_batches)
         elif config.loss.ratio_type == "sequence":
             loss_scale = batch_size

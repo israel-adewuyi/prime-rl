@@ -24,6 +24,23 @@ def test_grpo_loss():
     assert loss.shape == ()
 
 
+def test_grpo_loss_matches_clipped_objective():
+    trainer_logprobs = [torch.log(torch.tensor([1.0, 1.3], dtype=torch.float32, device="cuda"))]
+    inference_logprobs = [torch.zeros(2, dtype=torch.float32, device="cuda")]
+    advantages = [torch.ones(2, dtype=torch.float32, device="cuda")]
+    loss_mask = [torch.ones(2, dtype=torch.bool, device="cuda")]
+
+    loss, _ = compute_loss(
+        trainer_logprobs,
+        inference_logprobs,
+        advantages,
+        loss_mask=loss_mask,
+        loss_config=LossConfig(type="grpo", clip_eps=0.2),
+        loss_scale=2.0,
+    )
+    assert torch.isclose(loss, torch.tensor(-1.1, dtype=torch.float32, device="cuda"))
+
+
 def test_gspo_loss():
     # Create list of tensors as expected by compute_loss (simulating split sequences)
     trainer_logprobs = [torch.randn(40, dtype=torch.float32).cuda(), torch.randn(60, dtype=torch.float32).cuda()]
