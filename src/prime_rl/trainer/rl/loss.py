@@ -74,6 +74,18 @@ def compute_loss(
     total_is_masked_high = []
     total_sequence_masked_low = []
     total_clip_frac = []
+    total_importance_ratio = []
+    total_clipped_ratio = []
+    total_masked_importance_ratio = []
+    total_masked_clipped_ratio = []
+    total_log_importance_ratio = []
+    total_surrogate_unclipped = []
+    total_surrogate_clipped = []
+    total_ratio_oob_frac = []
+    total_active_clip_frac = []
+    total_adv_abs_mean = []
+    total_adv_std = []
+    total_valid_tokens = []
 
     for trainer_logprobs, inference_logprobs, advantages, loss_mask in zip(
         trainer_logprobs, inference_logprobs, advantages, loss_mask
@@ -83,12 +95,16 @@ def compute_loss(
         if loss_config.type == "grpo":
             importance_ratio = torch.exp(log_importance_ratio)
             clipped_ratio = torch.clamp(importance_ratio, 1 - loss_config.clip_eps, 1 + loss_config.clip_eps)
-            surrogate = torch.minimum(importance_ratio * advantages, clipped_ratio * advantages)
+            surrogate_unclipped = importance_ratio * advantages
+            surrogate_clipped = clipped_ratio * advantages
+            surrogate = torch.minimum(surrogate_unclipped, surrogate_clipped)
             token_mismatch_kl = torch.exp(log_importance_ratio) - log_importance_ratio - 1
             total_loss = total_loss - surrogate[loss_mask].sum()
             mismatch_kl = _safe_mean(token_mismatch_kl, loss_mask)
             is_clipped = (importance_ratio < 1 - loss_config.clip_eps) | (importance_ratio > 1 + loss_config.clip_eps)
             clip_mask = is_clipped[loss_mask]
+            active_clip_mask = (surrogate_clipped < surrogate_unclipped)[loss_mask]
+            masked_advantages = advantages[loss_mask]
             total_mismatch_kl.append(mismatch_kl)
             total_masked_mismatch_kl.append(_safe_mean(token_mismatch_kl, loss_mask & is_clipped))
             total_unmasked_mismatch_kl.append(_safe_mean(token_mismatch_kl, loss_mask & ~is_clipped))
@@ -97,6 +113,18 @@ def compute_loss(
             total_is_masked_high.append((importance_ratio[loss_mask] > 1 + loss_config.clip_eps).float())
             total_sequence_masked_low.append(torch.tensor(0.0, device=trainer_logprobs.device))
             total_clip_frac.append(clip_mask.float())
+            total_importance_ratio.append(importance_ratio)
+            total_clipped_ratio.append(clipped_ratio)
+            total_masked_importance_ratio.append(importance_ratio[loss_mask])
+            total_masked_clipped_ratio.append(clipped_ratio[loss_mask])
+            total_log_importance_ratio.append(log_importance_ratio[loss_mask])
+            total_surrogate_unclipped.append(surrogate_unclipped[loss_mask])
+            total_surrogate_clipped.append(surrogate_clipped[loss_mask])
+            total_ratio_oob_frac.append(clip_mask.float().mean().unsqueeze(0))
+            total_active_clip_frac.append(active_clip_mask.float().mean().unsqueeze(0))
+            total_adv_abs_mean.append(masked_advantages.abs().mean().unsqueeze(0))
+            total_adv_std.append(masked_advantages.std(unbiased=False).unsqueeze(0))
+            total_valid_tokens.append(loss_mask.sum().unsqueeze(0).float())
             continue
 
         # Compute trainer-inference mismatch KL
@@ -161,4 +189,16 @@ def compute_loss(
     }
     if total_clip_frac:
         loss_tensors["clip_frac"] = torch.cat(total_clip_frac)
+        loss_tensors["importance_ratio"] = torch.cat(total_importance_ratio)
+        loss_tensors["clipped_ratio"] = torch.cat(total_clipped_ratio)
+        loss_tensors["masked_importance_ratio"] = torch.cat(total_masked_importance_ratio)
+        loss_tensors["masked_clipped_ratio"] = torch.cat(total_masked_clipped_ratio)
+        loss_tensors["log_importance_ratio"] = torch.cat(total_log_importance_ratio)
+        loss_tensors["surrogate_unclipped"] = torch.cat(total_surrogate_unclipped)
+        loss_tensors["surrogate_clipped"] = torch.cat(total_surrogate_clipped)
+        loss_tensors["ratio_oob_frac"] = torch.cat(total_ratio_oob_frac)
+        loss_tensors["active_clip_frac"] = torch.cat(total_active_clip_frac)
+        loss_tensors["adv_abs_mean"] = torch.cat(total_adv_abs_mean)
+        loss_tensors["adv_std"] = torch.cat(total_adv_std)
+        loss_tensors["valid_tokens"] = torch.cat(total_valid_tokens)
     return scaled_loss, loss_tensors
