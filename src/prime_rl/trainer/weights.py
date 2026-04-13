@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 import torch
+import torch.distributed as dist
 from huggingface_hub import split_torch_state_dict_into_shards
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -270,6 +271,50 @@ def gather_weights_on_master(
         cpu_state = clean_lora_state_dict(cpu_state)
 
     return cpu_state
+
+
+def _gather_trainable_tensors_on_master(
+    model: nn.Module,
+    is_master: bool,
+    dtype: torch.dtype,
+    *,
+    kind: Literal["weights", "grads"],
+) -> dict[str, Tensor]:
+    cpu_state = {}
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, module="torch.distributed")
+        warnings.filterwarnings("ignore", category=UserWarning, module="torch.distributed.*")
+        for key, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            value = param.detach() if kind == "weights" else param.grad
+            if value is None:
+                continue
+            if isinstance(value, DTensor):
+                if not dist.is_initialized() or dist.get_world_size() == 1:
+                    value = value._local_tensor.to(dtype)
+                else:
+                    value = cast(DTensor, value.to(dtype)).full_tensor()
+            else:
+                value = value.to(dtype)
+            if is_master:
+                clean_key = next(iter(get_fqns(model, key)))
+                cpu_state[clean_key] = value.to("cpu", non_blocking=False)
+        if dist.is_initialized():
+            dist.barrier()
+    return cpu_state
+
+
+def gather_trainable_weights_on_master(
+    model: nn.Module, is_master: bool, dtype: torch.dtype = torch.bfloat16
+) -> dict[str, Tensor]:
+    return _gather_trainable_tensors_on_master(model, is_master, dtype, kind="weights")
+
+
+def gather_trainable_grads_on_master(
+    model: nn.Module, is_master: bool, dtype: torch.dtype = torch.bfloat16
+) -> dict[str, Tensor]:
+    return _gather_trainable_tensors_on_master(model, is_master, dtype, kind="grads")
 
 
 def get_adapter_state_dict(model: nn.Module, is_master: bool) -> dict[str, Tensor]:

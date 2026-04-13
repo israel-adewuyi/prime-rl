@@ -32,6 +32,7 @@ from prime_rl.trainer.model import (
 )
 from prime_rl.trainer.parallel_dims import get_parallel_dims
 from prime_rl.trainer.perf import get_perf_counter
+from prime_rl.trainer.hf_artifacts import HFArtifactsManager
 from prime_rl.trainer.utils import (
     MemoryProfiler,
     Tensors,
@@ -42,6 +43,7 @@ from prime_rl.trainer.utils import (
 )
 from prime_rl.trainer.world import get_world
 from prime_rl.trainer.utils import load_masks_from_hf, mask_gradients_in_optimizer
+from prime_rl.trainer.weights import gather_trainable_grads_on_master, gather_trainable_weights_on_master
 from prime_rl.utils.monitor import setup_monitor, setup_monitor_tensorboard
 from prime_rl.utils.pydantic_config import parse_argv
 from prime_rl.utils.utils import clean_exit, to_col_format
@@ -116,6 +118,7 @@ def train(config: RLTrainerConfig):
     ckpt_manager, weight_ckpt_manager = setup_ckpt_managers(
         config.output_dir, config.ckpt, config.model.experimental.lora
     )
+    hf_artifacts_manager = HFArtifactsManager(config.hf_artifacts) if config.hf_artifacts else None
 
     # Optionally, resume training from a checkpoint
     progress = Progress()
@@ -289,10 +292,16 @@ def train(config: RLTrainerConfig):
         if grad_norm_dtensor.device.type == "cpu":
             grad_norm_dtensor = grad_norm_dtensor.to(torch.device("cuda"))
         grad_norm = grad_norm_dtensor.full_tensor()
+        save_hf_artifacts = hf_artifacts_manager is not None and hf_artifacts_manager.should_save(progress.step + 1)
+        if save_hf_artifacts:
+            pre_weights = gather_trainable_weights_on_master(model, world.is_master, dtype=torch.bfloat16)
+            grads = gather_trainable_grads_on_master(model, world.is_master, dtype=torch.bfloat16)
 
         # Update the model parameters
         optimizer.step()
         optimizer.zero_grad()
+        if save_hf_artifacts:
+            hf_artifacts_manager.save(progress.step + 1, model, tokenizer, pre_weights, grads)
 
         # Update learning rate scheduler
         current_lr = optimizer.param_groups[0]["lr"]

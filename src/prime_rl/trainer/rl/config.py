@@ -65,6 +65,12 @@ class DataLoaderConfig(BaseConfig):
     fake: Annotated[FakeDataLoaderConfig | None, Field(description="Whether to use a fake data loader.")] = None
 
 
+class HFArtifactsConfig(BaseConfig):
+    repo_id: str
+    interval: Annotated[int, Field(ge=1)] = 50
+    algo: str = "rl"
+
+
 class BaseWeightBroadcastConfig(BaseModel):
     """Configures the base weight broadcast."""
 
@@ -138,6 +144,8 @@ class RLTrainerConfig(BaseSettings):
 
     # The wandb configuration
     wandb: WandbMonitorConfig | TensorboardMonitorConfig = None
+
+    hf_artifacts: HFArtifactsConfig | None = None
 
     load_mask: MaskTrainConfig | None = None
 
