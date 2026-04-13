@@ -30,6 +30,34 @@ class HFArtifactsManager:
     def should_save(self, step: int) -> bool:
         return step % self.config.interval == 0
 
+    def _upload_folder(self, step_path: str, artifact: str, folder_path: Path) -> bool:
+        try:
+            self.api.upload_folder(
+                repo_id=self.config.repo_id,
+                repo_type="model",
+                folder_path=str(folder_path),
+                path_in_repo=f"{step_path}/{artifact}",
+                commit_message=f"Upload {self.config.algo} {artifact} at step {step_path.split('_')[-1]}",
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to upload HF artifact '{artifact}' to {step_path}: {e}")
+            return False
+
+    def _upload_metadata(self, step_path: str, metadata_path: Path, step: int) -> bool:
+        try:
+            self.api.upload_file(
+                repo_id=self.config.repo_id,
+                repo_type="model",
+                path_or_fileobj=str(metadata_path),
+                path_in_repo=f"{step_path}/metadata.json",
+                commit_message=f"Upload {self.config.algo} metadata at step {step}",
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to upload HF metadata to {step_path}: {e}")
+            return False
+
     def save(
         self,
         step: int,
@@ -47,6 +75,7 @@ class HFArtifactsManager:
             convert_tt_to_hf_moe(weights_to_save)
         with TemporaryDirectory() as tmp_dir:
             step_dir = Path(tmp_dir)
+            step_path = f"{self.config.algo}_steps/step_{step}"
             weights_dir = step_dir / "weights"
             grads_dir = step_dir / "grads"
             delta_dir = step_dir / "delta"
@@ -57,14 +86,18 @@ class HFArtifactsManager:
             if model.generation_config:
                 model.generation_config.save_pretrained(weights_dir)
             tokenizer.save_pretrained(weights_dir)
-            (step_dir / "metadata.json").write_text(
-                json.dumps({"step": step, "algo": self.config.algo}, indent=2) + "\n", encoding="utf-8"
-            )
             self.logger.info(f"Uploading HF artifacts at step {step}")
-            self.api.upload_folder(
-                repo_id=self.config.repo_id,
-                repo_type="model",
-                folder_path=str(step_dir),
-                path_in_repo=f"{self.config.algo}_steps/step_{step}",
-                commit_message=f"Upload {self.config.algo} artifacts at step {step}",
+            uploaded = []
+            failed = []
+            for artifact, folder in (("weights", weights_dir), ("grads", grads_dir), ("delta", delta_dir)):
+                if self._upload_folder(step_path, artifact, folder):
+                    uploaded.append(artifact)
+                else:
+                    failed.append(artifact)
+            metadata_path = step_dir / "metadata.json"
+            metadata_path.write_text(
+                json.dumps({"step": step, "algo": self.config.algo, "uploaded": uploaded, "failed": failed}, indent=2)
+                + "\n",
+                encoding="utf-8",
             )
+            self._upload_metadata(step_path, metadata_path, step)
