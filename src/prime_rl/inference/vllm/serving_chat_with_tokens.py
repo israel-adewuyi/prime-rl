@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncGenerator
 from typing import ClassVar, Optional, Union
 
@@ -24,6 +25,19 @@ from vllm.tokenizers.mistral import (
 from vllm.v1.sample.logits_processor import validate_logits_processors_parameters
 
 logger = init_logger(__name__)
+
+
+def _first_mismatch_index(lhs: list[int], rhs: list[int]) -> int:
+    for idx, (lhs_token, rhs_token) in enumerate(zip(lhs, rhs)):
+        if lhs_token != rhs_token:
+            return idx
+    return min(len(lhs), len(rhs))
+
+
+def _slice_around(tokens: list[int], center: int, radius: int = 16) -> list[int]:
+    start = max(0, center - radius)
+    end = min(len(tokens), center + radius)
+    return tokens[start:end]
 
 
 class ChatCompletionRequestWithTokens(ChatCompletionRequest):
@@ -121,11 +135,31 @@ class OpenAIServingChatWithTokens(OpenAIServingChat):
         # In-place override the engine_prompts with the tokens from the request
         assert len(engine_prompts) == 1
         if engine_prompts[0]["prompt_token_ids"] != request.tokens:
+            engine_prompt_tokens = engine_prompts[0]["prompt_token_ids"]
+            mismatch_idx = _first_mismatch_index(engine_prompt_tokens, request.tokens)
+            engine_window = _slice_around(engine_prompt_tokens, mismatch_idx)
+            request_window = _slice_around(request.tokens, mismatch_idx)
             logger.warning(
-                "Prompt tokens provided in request do not match the engine prompt tokens. This may happen due to retokenization discrepancies in multi-turn conversations. Since you are using the /v1/chat/completions/tokens endpoint, we assume you want this behavior and use the provided prompt tokens. If this is undesired, use the standard /v1/chat/completions endpoint instead."
+                "Prompt tokens provided in request do not match the engine prompt tokens. "
+                "mismatch_idx=%d engine_len=%d request_len=%d. "
+                "This may happen due to retokenization discrepancies in multi-turn conversations. "
+                "Since you are using the /v1/chat/completions/tokens endpoint, we assume you want this behavior "
+                "and use the provided prompt tokens. If this is undesired, use the standard "
+                "/v1/chat/completions endpoint instead.",
+                mismatch_idx,
+                len(engine_prompt_tokens),
+                len(request.tokens),
             )
-            logger.debug(f"engine_prompt_tokens:\n{engine_prompts[0]['prompt_token_ids']}")
+            logger.debug(f"engine_prompt_tokens:\n{engine_prompt_tokens}")
             logger.debug(f"request_tokens:\n{request.tokens}")
+            logger.debug(f"engine_prompt_window[{mismatch_idx}]:\n{engine_window}")
+            logger.debug(f"request_tokens_window[{mismatch_idx}]:\n{request_window}")
+            if hasattr(tokenizer, "decode"):
+                logger.debug("engine_prompt_decoded_window[%d]:\n%s", mismatch_idx, tokenizer.decode(engine_window))
+                logger.debug("request_tokens_decoded_window[%d]:\n%s", mismatch_idx, tokenizer.decode(request_window))
+            logger.debug("request_messages:\n%s", json.dumps(request.messages, ensure_ascii=False, indent=2))
+            if request.chat_template is not None:
+                logger.debug("request_chat_template:\n%s", request.chat_template)
 
         engine_prompts[0]["prompt_token_ids"] = request.tokens
 
