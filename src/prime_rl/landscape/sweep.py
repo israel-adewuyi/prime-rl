@@ -41,7 +41,7 @@ class FixedOldPolicyBatch:
     adv_std: float
     adv_abs_mean: float
     adv_nonzero_frac: float
-    loss_mask_true_frac: float
+    valid_token_frac: float
 
 
 def _prepare_examples(config: LandscapeConfig):
@@ -225,9 +225,9 @@ async def _collect_fixed_old_policy_batch(
     adv_std = float(advantages_tensor.std(unbiased=False).item()) if advantages else 0.0
     adv_abs_mean = float(advantages_tensor.abs().mean().item()) if advantages else 0.0
     adv_nonzero_frac = float((advantages_tensor != 0).float().mean().item()) if advantages else 0.0
-    loss_mask_true_count = sum(int(micro_batch["loss_mask"].sum().item()) for micro_batch in micro_batches)
-    loss_mask_total_count = sum(int(micro_batch["loss_mask"].numel()) for micro_batch in micro_batches)
-    loss_mask_true_frac = float(loss_mask_true_count / max(loss_mask_total_count, 1))
+    valid_token_count = sum(int(micro_batch["loss_mask"].sum().item()) for micro_batch in micro_batches)
+    total_token_count = sum(int(micro_batch["loss_mask"].numel()) for micro_batch in micro_batches)
+    valid_token_frac = float(valid_token_count / max(total_token_count, 1))
 
     logger.info(
         f"Prepared fixed old-policy batch: num_rollouts={len(rollouts)} num_train_samples={len(train_examples)}"
@@ -235,7 +235,7 @@ async def _collect_fixed_old_policy_batch(
     logger.info(
         "Fixed old-policy diagnostics: "
         f"adv_mean={adv_mean:.8e} adv_std={adv_std:.8e} adv_nonzero_frac={adv_nonzero_frac:.6f} "
-        f"loss_mask_true_frac={loss_mask_true_frac:.6f}"
+        f"valid_token_frac={valid_token_frac:.6f}"
     )
     if adv_nonzero_frac == 0.0:
         logger.warning(
@@ -251,7 +251,7 @@ async def _collect_fixed_old_policy_batch(
         adv_std=adv_std,
         adv_abs_mean=adv_abs_mean,
         adv_nonzero_frac=adv_nonzero_frac,
-        loss_mask_true_frac=loss_mask_true_frac,
+        valid_token_frac=valid_token_frac,
     )
 
 
@@ -399,7 +399,7 @@ async def run_sweep(
                 "adv_old_std": fixed_old_batch.adv_std if fixed_old_batch is not None else None,
                 "adv_old_abs_mean": fixed_old_batch.adv_abs_mean if fixed_old_batch is not None else None,
                 "adv_old_nonzero_frac": fixed_old_batch.adv_nonzero_frac if fixed_old_batch is not None else None,
-                "loss_mask_old_true_frac": fixed_old_batch.loss_mask_true_frac if fixed_old_batch is not None else None,
+                "loss_old_valid_token_frac": fixed_old_batch.valid_token_frac if fixed_old_batch is not None else None,
                 "num_examples": len(examples),
                 "eval_mode": eval_mode,
                 "baseline": _is_origin(point.alpha, point.beta),
@@ -444,11 +444,11 @@ async def run_sweep(
             append_result(results_path, row)
 
             summary = [f"alpha={point.alpha:.3f}", f"beta={point.beta:.3f}"]
-            if row["loss_masked"] is not None:
-                summary.append(f"loss_masked={row['loss_masked']:.4f}")
-                summary.append(f"loss_vanilla={row['loss_vanilla']:.4f}")
-                summary.append(f"loss_clipped={row['loss_clipped']:.4f}")
-                summary.append(f"mismatch_kl={row['loss_shared_mismatch_kl_mean']:.4f}")
+            if row["loss_grpo"] is not None:
+                summary.append(f"loss_grpo={row['loss_grpo']:.4f}")
+                summary.append(f"loss_grpo_unclipped={row['loss_grpo_unclipped']:.4f}")
+                summary.append(f"kl_valid={row['loss_kl_valid_mean']:.4f}")
+                summary.append(f"kl_valid_clipped={row['loss_kl_valid_clipped_mean']:.4f}")
             if row["reward_mean"] is not None:
                 summary.append(f"reward_mean={row['reward_mean']:.4f}")
             logger.info(" ".join(summary))
