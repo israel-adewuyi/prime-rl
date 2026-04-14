@@ -48,8 +48,8 @@ def main():
     runs: list[RunSpec] = [
         RunSpec(model_name="israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL", s=100),
         RunSpec(model_name="israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL-step_50", s=50),
-        RunSpec(model_name="israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL-step_150", s=150),
-        RunSpec(model_name="Qwen/Qwen2.5-0.5B-Instruct", s=0),
+        # RunSpec(model_name="israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL-step_150", s=150),
+        # RunSpec(model_name="Qwen/Qwen2.5-0.5B-Instruct", s=0),
     ]
 
     base_cfg = tomllib.loads(base_cfg_path.read_text())
@@ -79,10 +79,10 @@ def main():
             "landscape",
             "@",
             str(out_cfg_path),
-            "--inference-gpu-ids",
-            "1",
             "--log.level",
             "debug",
+            "--inference.gpu-memory-utilization",
+            "0.75",
         ]
 
         print(f"\n=== RUN s={spec.s} model={spec.model_name} ===")

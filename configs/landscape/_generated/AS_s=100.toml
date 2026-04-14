@@ -1,47 +1,60 @@
 output_dir = "outputs/landscape"
+inference_gpu_ids = [
+    2,
+]
+trainer_gpu_ids = [
+    1,
+]
 
 [trainer.model]
 name = "israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL"
-seq_len = 32768
+seq_len = 65536
+optimization_dtype = "bfloat16"
 
 [trainer.optim]
 lr = 1e-06
 
+[trainer.loss]
+token_mask_low = 0.0
+token_mask_high = 1000000000.0
+geo_mask_low = 0.0
+geo_mask_high = 1000000000.0
+sequence_mask_low = 0.0
+sequence_mask_high = 1000000000.0
+
 [orchestrator]
-batch_size = 512
-seq_len = 32768
-rollouts_per_example = 4
+batch_size = 2048
+seq_len = 65536
+rollouts_per_example = 16
 env = [
-    { id = "alphabet-sort" },
+    { id = "alphabet-sort", args = { min_turns = 2, max_turns = 2, seed = 12345 } },
 ]
 
 [orchestrator.model]
 name = "israel-adewuyi/Qwen2.5-0.5B-Instruct-AlphabetSort-RL"
 
+[orchestrator.buffer]
+seed = 12345
+
 [orchestrator.sampling]
 max_tokens = 784
 
-[orchestrator.eval]
-interval = 10
-rollouts_per_example = 2
-num_examples = 512
-env = [
-    { id = "alphabet-sort" },
-    { args = { min_turns = 2, max_turns = 2 } },
-]
-
 [sweep]
-results_file = "d=AS_m=qwen-05B_s=100_alphabeta=0,1.csv"
-rollouts_file = "d=AS_m=qwen-05B_s=100_alphabeta=0,1.txt"
+results_file = "d=AS_m=qwen-05B_s=100_alphabeta=0,1_size=21_batch=2048_orthI.csv"
+rollouts_file = "d=AS_m=qwen-05B_s=100_alphabeta=0,1_size=21_batch=2048_orthI.txt"
+eval_mode = "both"
 
 [sweep.grid]
 alpha_min = -0.1
 alpha_max = 0.1
-alpha_steps = 20
+alpha_steps = 21
 beta_min = -0.1
 beta_max = 0.1
-beta_steps = 20
+beta_steps = 21
 
 [sweep.direction]
 delta_path = "/home/user/israel/prime-rl/outputs/grads/step_148.pt"
 eta_path = "/home/user/israel/prime-rl/outputs/grads/step_149.pt"
+orthogonalize_paths = true
+orthogonalized_subdir = "grads"
+orthogonalized_suffix = "orth"
