@@ -113,6 +113,7 @@ class _Harness:
             loss_compare=SimpleNamespace(clip_epsilon=0.2),
             weights_dir=Path("weights"),
             results_file=Path("landscape.csv"),
+            rollouts_file=Path("sampled_prompts.txt"),
         )
         orchestrator = SimpleNamespace(
             client=object(),
