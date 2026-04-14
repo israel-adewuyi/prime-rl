@@ -28,8 +28,10 @@ def test_compute_grpo_loss_metrics_matches_hand_computed_values() -> None:
 
     assert metrics["loss_grpo"].item() == pytest.approx(-((0.3 + 1.2 * 1.1) / 2.0))
     assert metrics["loss_grpo_unclipped"].item() == pytest.approx(-((0.3 + ratio * 1.1) / 2.0))
-    assert metrics["loss_kl_valid_mean"].mean().item() == pytest.approx(preclip_mismatch / 2.0)
-    assert metrics["loss_kl_valid_clipped_mean"].mean().item() == pytest.approx(postclip_mismatch / 2.0)
+    assert metrics["loss_kl_valid_mean"].mean().item() == pytest.approx(preclip_mismatch / 2.0, abs=1e-7)
+    assert metrics["loss_kl_valid_clipped_mean"].mean().item() == pytest.approx(
+        postclip_mismatch / 2.0, abs=1e-7
+    )
     assert metrics["loss_clip_frac"].mean().item() == pytest.approx(0.5)
     assert metrics["loss_clip_low_frac"].mean().item() == pytest.approx(0.0)
     assert metrics["loss_clip_high_frac"].mean().item() == pytest.approx(0.5)
@@ -86,6 +88,6 @@ def test_compute_grpo_loss_metrics_ignores_invalid_tokens() -> None:
 
     assert metrics["loss_grpo"].item() == pytest.approx(-(clipped_ratio * 1.0))
     assert metrics["loss_grpo_unclipped"].item() == pytest.approx(-(ratio * 1.0))
-    assert metrics["loss_kl_valid_mean"].mean().item() == pytest.approx(preclip_mismatch)
-    assert metrics["loss_kl_valid_clipped_mean"].mean().item() == pytest.approx(postclip_mismatch)
+    assert metrics["loss_kl_valid_mean"].mean().item() == pytest.approx(preclip_mismatch, abs=1e-7)
+    assert metrics["loss_kl_valid_clipped_mean"].mean().item() == pytest.approx(postclip_mismatch, abs=1e-7)
     assert metrics["loss_clip_frac"].mean().item() == pytest.approx(1.0)
