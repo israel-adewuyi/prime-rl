@@ -150,16 +150,16 @@ class OpenAIServingChatWithTokens(OpenAIServingChat):
                 len(engine_prompt_tokens),
                 len(request.tokens),
             )
-            logger.debug(f"engine_prompt_tokens:\n{engine_prompt_tokens}")
-            logger.debug(f"request_tokens:\n{request.tokens}")
-            logger.debug(f"engine_prompt_window[{mismatch_idx}]:\n{engine_window}")
-            logger.debug(f"request_tokens_window[{mismatch_idx}]:\n{request_window}")
+            logger.warning(f"engine_prompt_tokens:\n{engine_prompt_tokens}")
+            logger.warning(f"request_tokens:\n{request.tokens}")
+            logger.warning(f"engine_prompt_window[{mismatch_idx}]:\n{engine_window}")
+            logger.warning(f"request_tokens_window[{mismatch_idx}]:\n{request_window}")
             if hasattr(tokenizer, "decode"):
-                logger.debug("engine_prompt_decoded_window[%d]:\n%s", mismatch_idx, tokenizer.decode(engine_window))
-                logger.debug("request_tokens_decoded_window[%d]:\n%s", mismatch_idx, tokenizer.decode(request_window))
-            logger.debug("request_messages:\n%s", json.dumps(request.messages, ensure_ascii=False, indent=2))
+                logger.warning("engine_prompt_decoded_window[%d]:\n%s", mismatch_idx, tokenizer.decode(engine_window))
+                logger.warning("request_tokens_decoded_window[%d]:\n%s", mismatch_idx, tokenizer.decode(request_window))
+            logger.warning("request_messages:\n%s", json.dumps(request.messages, ensure_ascii=False, indent=2))
             if request.chat_template is not None:
-                logger.debug("request_chat_template:\n%s", request.chat_template)
+                logger.warning("request_chat_template:\n%s", request.chat_template)
 
         engine_prompts[0]["prompt_token_ids"] = request.tokens
 
