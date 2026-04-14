@@ -3,199 +3,89 @@ import math
 import pytest
 import torch
 
-from prime_rl.landscape.loss_utils import compute_landscape_loss_metrics
-from prime_rl.trainer.rl.config import LossConfig
-from prime_rl.trainer.rl.loss import compute_loss
+from prime_rl.landscape.eval_loss import _compute_grpo_loss_metrics
 
 
-def test_masked_regime_matches_original_compute_loss_token_mode() -> None:
+def test_compute_grpo_loss_metrics_matches_hand_computed_values() -> None:
     trainer_logprobs = [torch.tensor([-0.2, -0.7, -0.1], dtype=torch.float32)]
     inference_logprobs = [torch.tensor([-0.2, -1.2, -0.1], dtype=torch.float32)]
     advantages = [torch.tensor([0.3, 1.1, -0.2], dtype=torch.float32)]
-    loss_mask = [torch.tensor([True, True, False])]
-    loss_config = LossConfig(
-        ratio_type="token",
-        token_mask_low=0.5,
-        token_mask_high=1.4,
-        geo_mask_low=0.0,
-        geo_mask_high=1000.0,
-        sequence_mask_low=0.0,
-        sequence_mask_high=1000.0,
-        kl_tau=0.2,
-    )
+    valid_token_mask = [torch.tensor([True, True, False])]
 
-    original_loss, original_metrics = compute_loss(
-        trainer_logprobs=trainer_logprobs,
-        inference_logprobs=inference_logprobs,
-        teacher_logprobs=None,
-        advantages=advantages,
-        loss_mask=loss_mask,
-        loss_config=loss_config,
-        loss_scale=2,
-    )
-    new_metrics = compute_landscape_loss_metrics(
+    metrics = _compute_grpo_loss_metrics(
         trainer_logprobs=trainer_logprobs,
         inference_logprobs=inference_logprobs,
         advantages=advantages,
-        loss_mask=loss_mask,
-        loss_config=loss_config,
+        valid_token_mask=valid_token_mask,
         loss_scale=2,
         clip_epsilon=0.2,
     )
 
-    assert new_metrics["loss_masked"].item() == pytest.approx(float(original_loss.item()))
-    assert new_metrics["loss_shared_mismatch_kl_mean"].item() == pytest.approx(
-        float(original_metrics["mismatch_kl"].mean().item())
-    )
-    assert new_metrics["loss_masked_kept_mismatch_kl_mean"].item() == pytest.approx(
-        float(original_metrics["unmasked_mismatch_kl"].mean().item())
-    )
-    assert new_metrics["loss_masked_dropped_mismatch_kl_mean"].item() == pytest.approx(
-        float(original_metrics["masked_mismatch_kl"].mean().item())
-    )
-    assert new_metrics["loss_masked_drop_frac"].mean().item() == pytest.approx(
-        float(original_metrics["is_masked"].mean().item())
-    )
-    assert new_metrics["loss_masked_drop_token_low_frac"].mean().item() == pytest.approx(
-        float(original_metrics["is_masked_low"].mean().item())
-    )
-    assert new_metrics["loss_masked_drop_token_high_frac"].mean().item() == pytest.approx(
-        float(original_metrics["is_masked_high"].mean().item())
-    )
+    ratio = math.exp(0.5)
+    clipped_ratio = 1.2
+    preclip_mismatch = ratio - 0.5 - 1.0
+    postclip_mismatch = clipped_ratio - math.log(clipped_ratio) - 1.0
+
+    assert metrics["loss_grpo"].item() == pytest.approx(-((0.3 + 1.2 * 1.1) / 2.0))
+    assert metrics["loss_grpo_unclipped"].item() == pytest.approx(-((0.3 + ratio * 1.1) / 2.0))
+    assert metrics["loss_kl_valid_mean"].mean().item() == pytest.approx(preclip_mismatch / 2.0)
+    assert metrics["loss_kl_valid_clipped_mean"].mean().item() == pytest.approx(postclip_mismatch / 2.0)
+    assert metrics["loss_clip_frac"].mean().item() == pytest.approx(0.5)
+    assert metrics["loss_clip_low_frac"].mean().item() == pytest.approx(0.0)
+    assert metrics["loss_clip_high_frac"].mean().item() == pytest.approx(0.5)
+    assert metrics["loss_ratio_mean"].mean().item() == pytest.approx((1.0 + ratio) / 2.0)
+    assert metrics["loss_clipped_ratio_mean"].mean().item() == pytest.approx((1.0 + clipped_ratio) / 2.0)
+    assert metrics["loss_log_ratio_mean"].mean().item() == pytest.approx(0.25)
+    assert metrics["loss_surrogate_mean"].mean().item() == pytest.approx((0.3 + ratio * 1.1) / 2.0)
+    assert metrics["loss_surrogate_clipped_mean"].mean().item() == pytest.approx((0.3 + clipped_ratio * 1.1) / 2.0)
 
 
-def test_masked_regime_matches_original_compute_loss_sequence_mode() -> None:
-    trainer_logprobs = [torch.tensor([-0.3, -0.4], dtype=torch.float32)]
-    inference_logprobs = [torch.tensor([-0.6, -0.5], dtype=torch.float32)]
-    advantages = [torch.tensor([0.7, -0.2], dtype=torch.float32)]
-    loss_mask = [torch.tensor([True, True])]
-    loss_config = LossConfig(
-        ratio_type="sequence",
-        token_mask_low=0.1,
-        token_mask_high=1000.0,
-        geo_mask_low=0.0,
-        geo_mask_high=1000.0,
-        sequence_mask_low=0.0,
-        sequence_mask_high=1000.0,
-        kl_tau=0.1,
-    )
+def test_compute_grpo_loss_metrics_clips_negative_advantages_correctly() -> None:
+    trainer_logprobs = [torch.tensor([math.log(0.5)], dtype=torch.float32)]
+    inference_logprobs = [torch.tensor([0.0], dtype=torch.float32)]
+    advantages = [torch.tensor([-2.0], dtype=torch.float32)]
+    valid_token_mask = [torch.tensor([True])]
 
-    original_loss, original_metrics = compute_loss(
-        trainer_logprobs=trainer_logprobs,
-        inference_logprobs=inference_logprobs,
-        teacher_logprobs=None,
-        advantages=advantages,
-        loss_mask=loss_mask,
-        loss_config=loss_config,
-        loss_scale=1,
-    )
-    new_metrics = compute_landscape_loss_metrics(
+    metrics = _compute_grpo_loss_metrics(
         trainer_logprobs=trainer_logprobs,
         inference_logprobs=inference_logprobs,
         advantages=advantages,
-        loss_mask=loss_mask,
-        loss_config=loss_config,
+        valid_token_mask=valid_token_mask,
         loss_scale=1,
         clip_epsilon=0.2,
     )
 
-    assert new_metrics["loss_masked"].item() == pytest.approx(float(original_loss.item()))
-    assert new_metrics["loss_shared_mismatch_kl_mean"].item() == pytest.approx(
-        float(original_metrics["mismatch_kl"].mean().item())
-    )
-    assert new_metrics["loss_masked_dropped_mismatch_kl_mean"].item() == pytest.approx(
-        float(original_metrics["masked_mismatch_kl"].mean().item())
-    )
-    assert new_metrics["loss_masked_drop_sequence_low_frac"].mean().item() == pytest.approx(
-        float(original_metrics["sequence_masked_low"].mean().item())
-    )
-    assert new_metrics["loss_masked_drop_sequence_high_frac"].mean().item() == pytest.approx(
-        float(original_metrics["sequence_masked_high"].mean().item())
-    )
+    assert metrics["loss_grpo"].item() == pytest.approx(1.6)
+    assert metrics["loss_grpo_unclipped"].item() == pytest.approx(1.0)
+    assert metrics["loss_clip_frac"].mean().item() == pytest.approx(1.0)
+    assert metrics["loss_clip_low_frac"].mean().item() == pytest.approx(1.0)
+    assert metrics["loss_clip_high_frac"].mean().item() == pytest.approx(0.0)
+    assert metrics["loss_ratio_mean"].mean().item() == pytest.approx(0.5)
+    assert metrics["loss_clipped_ratio_mean"].mean().item() == pytest.approx(0.8)
 
 
-def test_compute_landscape_loss_metrics_token_regimes() -> None:
-    base_logprob = math.log(0.5)
-    trainer_logprobs = [torch.tensor([base_logprob, base_logprob], dtype=torch.float32)]
-    inference_logprobs = [torch.tensor([base_logprob, base_logprob - math.log(3.0)], dtype=torch.float32)]
-    advantages = [torch.ones(2, dtype=torch.float32)]
-    loss_mask = [torch.tensor([True, True])]
-    loss_config = LossConfig(
-        ratio_type="token",
-        token_mask_low=0.0,
-        token_mask_high=2.0,
-        geo_mask_low=0.0,
-        geo_mask_high=1000.0,
-        sequence_mask_low=0.0,
-        sequence_mask_high=1000.0,
-        kl_tau=0.0,
-    )
+def test_compute_grpo_loss_metrics_ignores_invalid_tokens() -> None:
+    trainer_logprobs = [torch.tensor([0.4, -0.2], dtype=torch.float32)]
+    inference_logprobs = [torch.tensor([0.0, -0.2], dtype=torch.float32)]
+    advantages = [torch.tensor([1.0, 100.0], dtype=torch.float32)]
+    valid_token_mask = [torch.tensor([True, False])]
 
-    metrics = compute_landscape_loss_metrics(
+    metrics = _compute_grpo_loss_metrics(
         trainer_logprobs=trainer_logprobs,
         inference_logprobs=inference_logprobs,
         advantages=advantages,
-        loss_mask=loss_mask,
-        loss_config=loss_config,
-        loss_scale=2,
-        clip_epsilon=0.2,
-    )
-
-    assert "teacher_kl" not in metrics
-    assert metrics["loss_masked"].item() == pytest.approx(-(1.0 * base_logprob) / 2.0)
-    assert metrics["loss_vanilla"].item() == pytest.approx(-((1.0 + 3.0) * base_logprob) / 2.0)
-    assert metrics["loss_clipped"].item() == pytest.approx(-((1.0 + 1.2) * base_logprob) / 2.0)
-    assert metrics["loss_shared_mismatch_kl_mean"].item() == pytest.approx((3.0 - math.log(3.0) - 1.0) / 2.0)
-    assert metrics["loss_shared_geo_seq_ratio_mean"].item() == pytest.approx(math.sqrt(3.0))
-    assert metrics["loss_masked_keep_frac"].mean().item() == pytest.approx(0.5)
-    assert metrics["loss_masked_drop_frac"].mean().item() == pytest.approx(0.5)
-    assert metrics["loss_masked_drop_token_low_frac"].mean().item() == pytest.approx(0.0)
-    assert metrics["loss_masked_drop_token_high_frac"].mean().item() == pytest.approx(0.5)
-    assert metrics["loss_masked_drop_sequence_low_frac"].mean().item() == pytest.approx(0.0)
-    assert metrics["loss_masked_drop_sequence_high_frac"].mean().item() == pytest.approx(0.0)
-    assert metrics["loss_masked_drop_geo_low_frac"].mean().item() == pytest.approx(0.0)
-    assert metrics["loss_masked_drop_geo_high_frac"].mean().item() == pytest.approx(0.0)
-    assert metrics["loss_masked_kept_mismatch_kl_mean"].item() == pytest.approx(0.0)
-    assert metrics["loss_masked_dropped_mismatch_kl_mean"].item() == pytest.approx(3.0 - math.log(3.0) - 1.0)
-    assert metrics["loss_clipped_clip_frac"].mean().item() == pytest.approx(0.5)
-    assert metrics["loss_clipped_clip_low_frac"].mean().item() == pytest.approx(0.0)
-    assert metrics["loss_clipped_clip_high_frac"].mean().item() == pytest.approx(0.5)
-    assert metrics["loss_clipped_ratio_preclip_mean"].item() == pytest.approx(2.0)
-    assert metrics["loss_clipped_ratio_postclip_mean"].item() == pytest.approx(1.1)
-
-
-def test_compute_landscape_loss_metrics_sequence_clipping_uses_sequence_ratio() -> None:
-    base_logprob = math.log(0.5)
-    trainer_logprobs = [torch.tensor([base_logprob, base_logprob], dtype=torch.float32)]
-    inference_logprobs = [torch.tensor([base_logprob - math.log(3.0), base_logprob], dtype=torch.float32)]
-    advantages = [torch.ones(2, dtype=torch.float32)]
-    loss_mask = [torch.tensor([True, True])]
-    loss_config = LossConfig(
-        ratio_type="sequence",
-        token_mask_low=0.0,
-        token_mask_high=1000.0,
-        geo_mask_low=0.0,
-        geo_mask_high=1000.0,
-        sequence_mask_low=0.0,
-        sequence_mask_high=1000.0,
-        kl_tau=0.0,
-    )
-
-    metrics = compute_landscape_loss_metrics(
-        trainer_logprobs=trainer_logprobs,
-        inference_logprobs=inference_logprobs,
-        advantages=advantages,
-        loss_mask=loss_mask,
-        loss_config=loss_config,
+        valid_token_mask=valid_token_mask,
         loss_scale=1,
         clip_epsilon=0.2,
     )
 
-    assert metrics["loss_masked"].item() == pytest.approx(-(3.0 * 2.0 * base_logprob) / 2.0)
-    assert metrics["loss_vanilla"].item() == pytest.approx(-(3.0 * 2.0 * base_logprob) / 2.0)
-    assert metrics["loss_clipped"].item() == pytest.approx(-(1.2 * 2.0 * base_logprob) / 2.0)
-    assert metrics["loss_clipped_clip_frac"].item() == pytest.approx(1.0)
-    assert metrics["loss_clipped_clip_low_frac"].item() == pytest.approx(0.0)
-    assert metrics["loss_clipped_clip_high_frac"].item() == pytest.approx(1.0)
-    assert metrics["loss_clipped_ratio_preclip_mean"].item() == pytest.approx(3.0)
-    assert metrics["loss_clipped_ratio_postclip_mean"].item() == pytest.approx(1.2)
+    ratio = math.exp(0.4)
+    clipped_ratio = 1.2
+    preclip_mismatch = ratio - 0.4 - 1.0
+    postclip_mismatch = clipped_ratio - math.log(clipped_ratio) - 1.0
+
+    assert metrics["loss_grpo"].item() == pytest.approx(-(clipped_ratio * 1.0))
+    assert metrics["loss_grpo_unclipped"].item() == pytest.approx(-(ratio * 1.0))
+    assert metrics["loss_kl_valid_mean"].mean().item() == pytest.approx(preclip_mismatch)
+    assert metrics["loss_kl_valid_clipped_mean"].mean().item() == pytest.approx(postclip_mismatch)
+    assert metrics["loss_clip_frac"].mean().item() == pytest.approx(1.0)
