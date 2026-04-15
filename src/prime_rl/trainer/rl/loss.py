@@ -92,7 +92,7 @@ def compute_loss(
     ):
         log_importance_ratio = trainer_logprobs - inference_logprobs
 
-        if loss_config.type == "grpo":
+        if loss_config.type == "grpo" or loss_config.type == "max_rl":
             importance_ratio = torch.exp(log_importance_ratio)
             clipped_ratio = torch.clamp(importance_ratio, 1 - loss_config.clip_eps, 1 + loss_config.clip_eps)
             surrogate_unclipped = importance_ratio * advantages

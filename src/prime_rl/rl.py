@@ -317,8 +317,19 @@ class RLConfig(BaseSettings):
                 self.orchestrator.advantage = AdvantageConfig(type="grpo")
             elif self.orchestrator.advantage is not None and self.orchestrator.advantage.type != "grpo":
                 raise ValueError("trainer.loss.type='grpo' requires orchestrator.advantage.type='grpo'")
+        elif self.trainer.loss.type == "max_rl":
+            if not orchestrator_advantage_explicit:
+                self.orchestrator.advantage = AdvantageConfig(type="max_rl")
+            elif self.orchestrator.advantage is not None and self.orchestrator.advantage.type != "max_rl":
+                raise ValueError("trainer.loss.type='max_rl' requires orchestrator.advantage.type='max_rl'")
         elif orchestrator_advantage_explicit and self.orchestrator.advantage is not None and self.orchestrator.advantage.type == "grpo":
             raise ValueError("orchestrator.advantage.type='grpo' requires trainer.loss.type='grpo'")
+        elif (
+            orchestrator_advantage_explicit
+            and self.orchestrator.advantage is not None
+            and self.orchestrator.advantage.type == "max_rl"
+        ):
+            raise ValueError("orchestrator.advantage.type='max_rl' requires trainer.loss.type='max_rl'")
         return self
 
     @model_validator(mode="after")

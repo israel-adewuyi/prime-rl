@@ -338,16 +338,16 @@ class BufferConfig(BaseConfig):
 
 
 class AdvantageConfig(BaseConfig):
-    type: Literal["default", "grpo"] = "default"
+    type: Literal["default", "grpo", "max_rl"] = "default"
     length_weighted_mean: bool = False
-    eps: Annotated[float, Field(gt=0, description="Epsilon added to the group std for GRPO advantage normalization.")] = (
+    eps: Annotated[float, Field(gt=0, description="Epsilon added to the normalization denominator for GRPO and MaxRL advantages.")] = (
         1e-6
     )
 
     @model_validator(mode="after")
     def validate_grpo_settings(self):
-        if self.type == "grpo" and self.length_weighted_mean:
-            raise ValueError("GRPO advantage does not support length_weighted_mean")
+        if (self.type == "grpo" or self.type == "max_rl") and self.length_weighted_mean:
+            raise ValueError(f"{self.type} advantage does not support length_weighted_mean")
         return self
 
 

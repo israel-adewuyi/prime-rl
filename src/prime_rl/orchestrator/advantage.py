@@ -16,6 +16,9 @@ def compute_advantage(
     if advantage_config.type == "grpo":
         centered = rewards - rewards.mean()
         advantages = centered / (rewards.std(unbiased=False) + advantage_config.eps)
+    elif advantage_config.type == "max_rl":
+        centered = rewards - rewards.mean()
+        advantages = centered / (rewards.mean() + advantage_config.eps)
     elif advantage_config.length_weighted_mean:
         baseline = (rewards * lengths).sum() / lengths.sum()
         advantages = rewards - baseline
