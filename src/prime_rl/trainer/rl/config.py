@@ -20,7 +20,7 @@ from prime_rl.utils.pydantic_config import BaseConfig, BaseSettings
 class LossConfig(BaseConfig):
     """Base config for loss."""
 
-    type: Annotated[Literal["default", "grpo", "max_rl"], Field(description="Loss type to use.")] = "default"
+    type: Annotated[Literal["default", "grpo", "max_rl", "dppo"], Field(description="Loss type to use.")] = "default"
     ratio_type: Annotated[Literal["token", "sequence"], Field(description="Type of importance ratio to use.")] = "token"
 
     mask_ratio_high: Annotated[float, Field(ge=0)] = 8.0
@@ -41,6 +41,7 @@ class LossConfig(BaseConfig):
         float,
         Field(ge=0, description="KL coefficient for GRPO. Requires reference logprobs, which are not wired on this branch."),
     ] = 0.0
+    dppo_delta: Annotated[float, Field(ge=0, description="Binary TV threshold used by the DPPO token mask.")] = 0.2
 
     @model_validator(mode="after")
     def validate_grpo_settings(self):
@@ -51,6 +52,23 @@ class LossConfig(BaseConfig):
                 raise ValueError(
                     f"{self.type} beta > 0 is not supported on this branch because reference logprobs are not wired"
                 )
+        elif self.type == "dppo":
+            if self.ratio_type != "token":
+                raise ValueError("dppo requires loss.ratio_type='token'")
+            if self.mask_ratio_high != 8.0:
+                raise ValueError("dppo does not support loss.mask_ratio_high")
+            if self.mask_ratio_low != 0.125:
+                raise ValueError("dppo does not support loss.mask_ratio_low")
+            if self.sequence_mask_ratio_low != 0.0:
+                raise ValueError("dppo does not support loss.sequence_mask_ratio_low")
+            if self.kl_tau != 0.0:
+                raise ValueError("dppo does not support loss.kl_tau")
+            if self.kl_mask_type != "all":
+                raise ValueError("dppo does not support loss.kl_mask_type")
+            if self.clip_eps != 0.2:
+                raise ValueError("dppo does not support loss.clip_eps")
+            if self.beta != 0.0:
+                raise ValueError("dppo does not support loss.beta")
         return self
 
 

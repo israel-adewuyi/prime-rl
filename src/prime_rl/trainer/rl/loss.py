@@ -86,6 +86,12 @@ def compute_loss(
     total_adv_abs_mean = []
     total_adv_std = []
     total_valid_tokens = []
+    dppo_loss_scale = 0
+    total_dppo_rejected_mismatch_kl = []
+    total_dppo_kept_mismatch_kl = []
+    total_dppo_rejected = []
+    total_dppo_eligible_importance_ratio = []
+    total_dppo_kept_importance_ratio = []
 
     for trainer_logprobs, inference_logprobs, advantages, loss_mask in zip(
         trainer_logprobs, inference_logprobs, advantages, loss_mask
@@ -125,6 +131,33 @@ def compute_loss(
             total_adv_abs_mean.append(masked_advantages.abs().mean().unsqueeze(0))
             total_adv_std.append(masked_advantages.std(unbiased=False).unsqueeze(0))
             total_valid_tokens.append(loss_mask.sum().unsqueeze(0).float())
+            continue
+        
+        elif loss_config.type == "dppo":
+            threshold = loss_config.dppo_delta
+            importance_ratio = torch.exp(log_importance_ratio)
+            token_mismatch_kl = torch.exp(log_importance_ratio) - log_importance_ratio - 1
+            D = torch.abs(torch.exp(trainer_logprobs) - torch.exp(inference_logprobs))
+            dppo_bad_mask = ((advantages > 0) & (importance_ratio > 1) & (D > threshold)) | (
+                (advantages < 0) & (importance_ratio < 1) & (D > threshold)
+            )
+            token_mask = loss_mask & ~dppo_bad_mask
+            dppo_rejected_mask = loss_mask & dppo_bad_mask
+            masked_advantages = advantages[token_mask]
+            loss = (importance_ratio * advantages)[token_mask].sum()
+            total_loss = total_loss - loss
+            dppo_loss_scale += int(token_mask.sum().item())
+
+            total_mismatch_kl.append(_safe_mean(token_mismatch_kl, loss_mask))
+            total_dppo_rejected_mismatch_kl.append(_safe_mean(token_mismatch_kl, dppo_rejected_mask))
+            total_dppo_kept_mismatch_kl.append(_safe_mean(token_mismatch_kl, token_mask))
+            total_dppo_rejected.append(dppo_bad_mask[loss_mask].float())
+            total_sequence_masked_low.append(torch.tensor(0.0, device=trainer_logprobs.device))
+            total_dppo_eligible_importance_ratio.append(importance_ratio[loss_mask])
+            total_dppo_kept_importance_ratio.append(importance_ratio[token_mask])
+            total_log_importance_ratio.append(log_importance_ratio[loss_mask])
+            total_adv_abs_mean.append(_safe_mean(advantages.abs(), token_mask).unsqueeze(0))
+            total_valid_tokens.append(token_mask.sum().unsqueeze(0).float())
             continue
 
         # Compute trainer-inference mismatch KL
@@ -176,7 +209,24 @@ def compute_loss(
         total_sequence_masked_low.append(seq_should_mask.float())
 
     # Apply loss scaling
+    if loss_config.type == "dppo":
+        loss_scale = max(dppo_loss_scale, 1)
     scaled_loss = total_loss / loss_scale
+
+    if loss_config.type == "dppo":
+        return scaled_loss, {
+            "mismatch_kl": torch.stack(total_mismatch_kl),
+            "dppo_rejected_mismatch_kl": torch.stack(total_dppo_rejected_mismatch_kl),
+            "dppo_kept_mismatch_kl": torch.stack(total_dppo_kept_mismatch_kl),
+            "dppo_rejected": torch.cat(total_dppo_rejected),
+            "sequence_masked_low": torch.stack(total_sequence_masked_low),
+            "dppo_eligible_importance_ratio": torch.cat(total_dppo_eligible_importance_ratio),
+            "dppo_kept_importance_ratio": torch.cat(total_dppo_kept_importance_ratio),
+            "log_importance_ratio": torch.cat(total_log_importance_ratio),
+            "adv_abs_mean": torch.cat(total_adv_abs_mean),
+            "adv_std": torch.cat(total_adv_std),
+            "valid_tokens": torch.cat(total_valid_tokens),
+        }
 
     loss_tensors = {
         "mismatch_kl": torch.stack(total_mismatch_kl),
