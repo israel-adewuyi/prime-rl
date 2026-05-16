@@ -1,5 +1,6 @@
 import asyncio
 import time
+import math
 from pathlib import Path
 from typing import Any
 
@@ -20,23 +21,49 @@ from prime_rl.utils.monitor import get_monitor
 from prime_rl.utils.utils import capitalize, get_eval_dir, get_step_path
 from prime_rl.utils.vf import generate_batch
 
-
 def compute_pass_at_k(rewards: list[int]) -> dict[str, float]:
     total_attempts = len(rewards)
-    k = total_attempts // 2
 
-    if k == 0:
-        return {"pass@1": float(any(reward == 1.0 for reward in rewards))}
+    if total_attempts == 0:
+        return {"pass@1": 0.0}
 
-    num_trials = 100
-    pass_rates = []
+    num_correct = sum(1 for reward in rewards if reward == 1.0)
 
-    for _ in range(num_trials):
-        sampled_rewards = np.random.choice(rewards, size=k, replace=False)
-        pass_rate = float(any(reward == 1.0 for reward in sampled_rewards))
-        pass_rates.append(pass_rate)
+    def pass_at_k(n: int, c: int, k: int) -> float:
+        if c == 0:
+            return 0.0
+        if k > n:
+            return 0.0
+        if n - c < k:
+            return 1.0
 
-    return {f"pass@{k}": float(np.mean(pass_rates))}
+        # 1 - C(n-c, k) / C(n, k)
+        return 1.0 - math.comb(n - c, k) / math.comb(n, k)
+
+    results = {}
+
+    k = total_attempts
+    while k >= 1:
+        results[f"pass@{k}"] = float(pass_at_k(total_attempts, num_correct, k))
+        k //= 2
+
+    return results
+# def compute_pass_at_k(rewards: list[int]) -> dict[str, float]:
+#     total_attempts = len(rewards)
+#     k = total_attempts // 2
+
+#     if k == 0:
+#         return {"pass@1": float(any(reward == 1.0 for reward in rewards))}
+
+#     num_trials = 100
+#     pass_rates = []
+
+#     for _ in range(num_trials):
+#         sampled_rewards = np.random.choice(rewards, size=k, replace=False)
+#         pass_rate = float(any(reward == 1.0 for reward in sampled_rewards))
+#         pass_rates.append(pass_rate)
+
+#     return {f"pass@{k}": float(np.mean(pass_rates))}
 
 
 def prepare_sampling_args(sampling_config: EvalSamplingConfig, client_config: ClientConfig) -> dict[str, Any]:
