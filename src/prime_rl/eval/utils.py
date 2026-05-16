@@ -1,4 +1,5 @@
 import asyncio
+import math
 import time
 import math
 from pathlib import Path
@@ -99,6 +100,69 @@ def prepare_sampling_args(sampling_config: EvalSamplingConfig, client_config: Cl
         sampling_args["extra_body"] = extra_body
 
     return sampling_args
+
+
+def _get_response_field(value: Any, field: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(field, default)
+    return getattr(value, field, default)
+
+
+def _parse_vllm_token_id(token: Any) -> int | None:
+    if not isinstance(token, str):
+        return None
+    prefix = "token_id:"
+    if not token.startswith(prefix):
+        return None
+    try:
+        return int(token.removeprefix(prefix))
+    except ValueError:
+        return None
+
+
+def extract_token_metadata(results: GenerateOutputs) -> list[dict[str, Any]]:
+    """Extract sampled-token IDs, logprobs, and probabilities from vLLM chat responses."""
+    rows: list[dict[str, Any]] = []
+
+    for rollout_idx, state in enumerate(results.state):
+        responses = _get_response_field(state, "responses", [])
+        global_token_idx = 0
+
+        for turn_idx, response in enumerate(responses):
+            choices = _get_response_field(response, "choices", []) or []
+            if len(choices) != 1:
+                continue
+
+            choice = choices[0]
+            logprobs = _get_response_field(choice, "logprobs")
+            content = _get_response_field(logprobs, "content") if logprobs is not None else None
+            if content is None:
+                continue
+
+            for token_idx, token_logprob in enumerate(content):
+                token = _get_response_field(token_logprob, "token")
+                logprob = _get_response_field(token_logprob, "logprob")
+                if logprob is None:
+                    continue
+
+                rows.append(
+                    {
+                        "rollout_idx": rollout_idx,
+                        "example_id": results.example_id[rollout_idx],
+                        "task": results.task[rollout_idx],
+                        "reward": results.reward[rollout_idx],
+                        "turn_idx": turn_idx,
+                        "token_idx": token_idx,
+                        "global_token_idx": global_token_idx,
+                        "token": token,
+                        "token_id": _parse_vllm_token_id(token),
+                        "logprob": logprob,
+                        "probability": math.exp(logprob),
+                    }
+                )
+                global_token_idx += 1
+
+    return rows
 
 
 async def run_eval(
@@ -246,6 +310,16 @@ async def run_eval(
             await evals_client.finalize_evaluation(eval_id, metrics=eval_metrics)
 
             logger.info(f"Pushed eval results for {env_id} to Environment Hub (eval_id: {eval_id})")
+
+    if save_config.token_metadata is not None and save_config.token_metadata.enabled:
+        token_rows = extract_token_metadata(results)
+        token_path = save_config.token_metadata.path or (
+            get_step_path(get_eval_dir(output_dir), ckpt_step) / env_name_or_id / "token_metadata"
+        )
+        Dataset.from_list(token_rows).save_to_disk(token_path)
+        logger.info(
+            f"Saved token metadata for {env_name_or_id} to disk ({token_path}, num_tokens={len(token_rows)})"
+        )
 
 
 async def run_evals(

@@ -159,9 +159,24 @@ class EvalSaveHFConfig(BaseConfig):
     ] = False
 
 
+class EvalSaveTokenMetadataConfig(BaseConfig):
+    enabled: Annotated[
+        bool,
+        Field(description="Whether to save per-token metadata for eval completions to disk."),
+    ] = False
+
+    path: Annotated[
+        Path | None,
+        Field(
+            description="The path to save per-token metadata to. If None, saves under the eval output directory."
+        ),
+    ] = None
+
+
 class EvalSaveConfig(BaseConfig):
     disk: EvalSaveDiskConfig | None = None
     hf: EvalSaveHFConfig | None = None
+    token_metadata: EvalSaveTokenMetadataConfig | None = None
     env_hub: Annotated[
         bool,
         Field(
