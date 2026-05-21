@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from datasets import Dataset
 from huggingface_hub import whoami
 from openai import AsyncOpenAI
 from prime_evals import AsyncEvalsClient
@@ -40,7 +41,9 @@ def compute_pass_at_k(rewards: list[int]) -> dict[str, float]:
     return {f"pass@{k}": float(np.mean(pass_rates))}
 
 
-def prepare_sampling_args(sampling_config: EvalSamplingConfig, client_config: ClientConfig) -> dict[str, Any]:
+def prepare_sampling_args(
+    sampling_config: EvalSamplingConfig, client_config: ClientConfig, top_logprobs: int | None = None
+) -> dict[str, Any]:
     """Prepare sampling args for the client."""
     # Initialize sampling args
     sampling_args: dict[str, Any] = {}
@@ -58,6 +61,8 @@ def prepare_sampling_args(sampling_config: EvalSamplingConfig, client_config: Cl
     if client_config.server_type == "vllm":
         # Always return logprobs and token IDs from vLLM server
         sampling_args["logprobs"] = True
+        if top_logprobs is not None:
+            sampling_args["top_logprobs"] = top_logprobs
         extra_body: dict[str, Any] = {"return_tokens_as_token_ids": True}
 
         # Apply vLLM-specific sampling arguments, if specified
@@ -93,6 +98,28 @@ def _parse_vllm_token_id(token: Any) -> int | None:
         return None
 
 
+def _extract_top_logprobs(top_logprobs: Any) -> list[dict[str, Any]] | None:
+    if top_logprobs is None:
+        return None
+
+    rows: list[dict[str, Any]] = []
+    for rank, candidate in enumerate(top_logprobs):
+        token = _get_response_field(candidate, "token")
+        logprob = _get_response_field(candidate, "logprob")
+        if logprob is None:
+            continue
+        rows.append(
+            {
+                "rank": rank,
+                "token": token,
+                "token_id": _parse_vllm_token_id(token),
+                "logprob": logprob,
+                "probability": math.exp(logprob),
+            }
+        )
+    return rows
+
+
 def extract_token_metadata(results: GenerateOutputs) -> list[dict[str, Any]]:
     """Extract sampled-token IDs, logprobs, and probabilities from vLLM chat responses."""
     rows: list[dict[str, Any]] = []
@@ -115,6 +142,7 @@ def extract_token_metadata(results: GenerateOutputs) -> list[dict[str, Any]]:
             for token_idx, token_logprob in enumerate(content):
                 token = _get_response_field(token_logprob, "token")
                 logprob = _get_response_field(token_logprob, "logprob")
+                top_logprobs = _extract_top_logprobs(_get_response_field(token_logprob, "top_logprobs"))
                 if logprob is None:
                     continue
 
@@ -131,6 +159,7 @@ def extract_token_metadata(results: GenerateOutputs) -> list[dict[str, Any]]:
                         "token_id": _parse_vllm_token_id(token),
                         "logprob": logprob,
                         "probability": math.exp(logprob),
+                        "top_logprobs": top_logprobs,
                     }
                 )
                 global_token_idx += 1
@@ -163,7 +192,13 @@ async def run_eval(
     env_name_or_id = env_name or env_id
     env = load_environment(env_id, **env_args)
     dataset = env.get_eval_dataset(n=num_examples)
-    sampling_args = prepare_sampling_args(sampling_config, client_config)
+    token_metadata_config = save_config.token_metadata
+    top_logprobs = (
+        token_metadata_config.top_logprobs
+        if token_metadata_config is not None and token_metadata_config.enabled
+        else None
+    )
+    sampling_args = prepare_sampling_args(sampling_config, client_config, top_logprobs=top_logprobs)
 
     logger.info(
         f"Evaluating {env_name_or_id} ({num_examples=}, {rollouts_per_example=}) {'with default args' if env_args == {} else f'with args {env_args}'}"
