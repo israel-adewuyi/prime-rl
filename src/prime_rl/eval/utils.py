@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from datasets import Dataset
 from huggingface_hub import whoami
 from openai import AsyncOpenAI
 from prime_evals import AsyncEvalsClient
