@@ -165,6 +165,14 @@ class EvalSaveTokenMetadataConfig(BaseConfig):
         Field(description="Whether to save per-token metadata for eval completions to disk."),
     ] = False
 
+    top_logprobs: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description="Number of top token log probabilities to request and save for each generated token. If None, only the sampled token log probability is saved.",
+        ),
+    ] = None
+
     path: Annotated[
         Path | None,
         Field(
