@@ -90,7 +90,7 @@ class FileMonitor:
 if __name__ == "__main__":
     # Configure directories to monitor with their retention policies
     directories_to_monitor = [
-        ("./outputs/weights", 3),  # Keep last 3 weight files
+        # ("./outputs/weights", 3),  # Keep last 3 weight files
         ("./outputs/rollouts", 3),  # Keep last 10 rollout files
     ]
 

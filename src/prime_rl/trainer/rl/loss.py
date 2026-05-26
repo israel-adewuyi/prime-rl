@@ -224,7 +224,6 @@ def compute_loss(
             "dppo_kept_importance_ratio": torch.cat(total_dppo_kept_importance_ratio),
             "log_importance_ratio": torch.cat(total_log_importance_ratio),
             "adv_abs_mean": torch.cat(total_adv_abs_mean),
-            "adv_std": torch.cat(total_adv_std),
             "valid_tokens": torch.cat(total_valid_tokens),
         }
 

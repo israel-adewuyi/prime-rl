@@ -77,23 +77,6 @@ async def orchestrate(config: OrchestratorConfig):
     # Load tokenizer
     logger.info(f"Initializing tokenizer for {config.model.name}")
     tokenizer = AutoTokenizer.from_pretrained(config.model.name, trust_remote_code=config.model.trust_remote_code)
-    tokenizer.chat_template = """
-{%- if messages[0]['role'] == 'system' %}
-    {{- '<|im_start|>system\n' + messages[0]['content'] + '<|im_end|>\n' }}
-{%- else %}
-    {{- '<|im_start|>system\nYou are a helpful mathematical AI assistant. Please reason step by step, and put your final answer within \\\\boxed{}.<|im_end|>\n' }}
-{%- endif %}
-{%- for message in messages %}
-    {%- if message['role'] == 'user' or (message['role'] == 'system' and not loop.first) %}
-        {{- '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n' }}
-    {%- elif message['role'] == 'assistant' %}
-        {{- '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n' }}
-    {%- endif %}
-{%- endfor %}
-{%- if add_generation_prompt %}
-    {{- '<|im_start|>assistant\n' }}
-{%- endif %}
-"""
 
     # Setup monitor
     logger.info(f"Initializing monitor ({config.wandb})")
