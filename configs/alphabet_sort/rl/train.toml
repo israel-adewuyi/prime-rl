@@ -1,13 +1,18 @@
-max_steps = 150
+max_steps = 200
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [optim]
-lr = 1e-4
+lr = 2e-6
 
 [wandb]
 platform = "tensorboard"
-project = "slimpeft_v2"
-name = "train_alphabetsort-qwen0.5B-sparsity-99_lr=1e4_random10"
+project = "AS_to_100"
+name = "train_dppo_lr=2e6_temp=1_topP=1_topK=8_r4"
+
+[loss]
+type = "dppo"
+ratio_type = "token"
+dppo_delta = 0.2
 

@@ -34,7 +34,7 @@ def get_sampling_args(sampling_config: SamplingConfig) -> dict:
     sampling_args["logprobs"] = True
     sampling_args["extra_body"] = {
         "return_tokens_as_token_ids": True,
-        "top_k": -1,
+        "top_k": 8,
         "min_p": 0.0,
     }
     sampling_args["extra_body"]["min_tokens"] = sampling_args.pop("min_tokens")

@@ -44,6 +44,7 @@ dependencies = [
     "prime-sandboxes>=0.2.3",
     "flash-attn",
     "griffelib>=2,<3",
+    "alphabet-sort==0.1.7",
 ]
 
 [project.scripts]
@@ -74,6 +75,7 @@ reverse-text = { index = "primeintellect" }
 verifiers = { git = "https://github.com/PrimeIntellect-ai/verifiers.git", rev = "91f436d" }
 dion = { git = "https://github.com/samsja/dion.git", rev = "main" }
 torchtitan = { git = "https://github.com/pytorch/torchtitan", rev = "a1fdd7e" }
+alphabet-sort = { index = "kalomaze" }
 flash-attn = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.8-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl" }
 
 [tool.uv.extra-build-dependencies]
@@ -89,6 +91,10 @@ url = "https://hub.primeintellect.ai/primeintellect/simple/"
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/test/cu128"
 explicit = true
+
+[[tool.uv.index]]
+name = "kalomaze"
+url = "https://hub.primeintellect.ai/kalomaze/simple/"
 
 [tool.ruff.lint]
 select = ["F", "I"]
