@@ -253,6 +253,7 @@ async def run_eval(
         }
     )
     unique_rewards = results_df.reward.unique()
+    best_at_k = results_df.groupby("example_id").reward.max().mean()
     could_be_binary = set(unique_rewards).issubset({0.0, 1.0})
     if could_be_binary:
         pass_at_k = (
@@ -266,7 +267,10 @@ async def run_eval(
 
     # Log statistics to console
     eval_time = time.perf_counter() - eval_start_time
-    message = f"Evaluated {env_name_or_id} in {eval_time:.2f}s (Avg@{k}={results_df.reward.mean():.4f}"
+    message = (
+        f"Evaluated {env_name_or_id} in {eval_time:.2f}s "
+        f"(Avg@{k}={results_df.reward.mean():.4f}, Best@{k}={best_at_k:.4f}"
+    )
     if could_be_binary:
         assert pass_at_k is not None
         for pass_rate, pass_rate_score in pd.Series(pass_at_k.mean()).items():
@@ -277,6 +281,7 @@ async def run_eval(
     # Log statistics to monitor
     eval_metrics = {
         f"avg@{k}": results_df.reward.mean(),
+        f"best@{k}": best_at_k,
         "completion_len/avg": results_df.completion_len.mean().item(),
         "completion_len/max": results_df.completion_len.max().item(),
         "completion_len/min": results_df.completion_len.min().item(),
