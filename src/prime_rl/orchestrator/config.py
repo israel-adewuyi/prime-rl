@@ -26,6 +26,13 @@ class SamplingConfig(BaseConfig):
         ),
     ] = 1.0
 
+    top_k: Annotated[
+        int,
+        Field(
+            description="Number of top tokens to consider during training rollouts. If -1, all tokens are considered.",
+        ),
+    ] = 8
+
     max_tokens: Annotated[
         int | None,
         Field(

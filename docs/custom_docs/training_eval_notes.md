@@ -53,3 +53,14 @@ interval = 50
 ```
 
 Training rollouts currently log sampled-token logprobs, but not top-5 candidate logprobs. Adding RL top-logprobs is feasible, but should be opt-in because `top_logprobs` must be requested for all generated training rollouts, even though only a few samples are logged.
+
+## RL Training Sampling
+
+Set training rollout top-k in the orchestrator sampling config:
+
+```toml
+[sampling]
+top_k = 8
+```
+
+For single-file configs, use `[orchestrator.sampling]`.
