@@ -27,9 +27,11 @@ Eval already supports per-token top-logprobs. Configure:
 [save.token_metadata]
 enabled = true
 top_logprobs = 5
+max_examples = 16
+seed = 2001
 ```
 
-This saves locally as a HuggingFace Dataset, not to W&B or TensorBoard. If `path` is unset, output is step-scoped:
+This saves locally as a HuggingFace Dataset, not to W&B or TensorBoard. `max_examples` keeps token metadata for a deterministic prompt subset while eval metrics still use all completions. If `path` is unset, output is step-scoped:
 
 ```text
 <output_dir>/evals/step_<ckpt_step>/<env_name_or_id>/token_metadata

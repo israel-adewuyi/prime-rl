@@ -173,6 +173,19 @@ class EvalSaveTokenMetadataConfig(BaseConfig):
         ),
     ] = None
 
+    max_examples: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="Maximum number of eval examples to save token metadata for. If None, saves metadata for all examples.",
+        ),
+    ] = None
+
+    seed: Annotated[
+        int,
+        Field(description="Random seed used only for deterministic token metadata example subsampling."),
+    ] = 0
+
     path: Annotated[
         Path | None,
         Field(

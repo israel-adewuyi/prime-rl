@@ -1,7 +1,7 @@
 import asyncio
 import math
+import random
 import time
-import math
 from pathlib import Path
 from typing import Any
 
@@ -194,6 +194,20 @@ def extract_token_metadata(results: GenerateOutputs) -> list[dict[str, Any]]:
     return rows
 
 
+def filter_token_metadata_examples(
+    token_rows: list[dict[str, Any]], example_ids: list[int], max_examples: int | None, seed: int
+) -> list[dict[str, Any]]:
+    if max_examples is None:
+        return token_rows
+
+    unique_example_ids = list(dict.fromkeys(example_ids))
+    if max_examples >= len(unique_example_ids):
+        return token_rows
+
+    selected = set(random.Random(seed).sample(unique_example_ids, max_examples))
+    return [row for row in token_rows if row["example_id"] in selected]
+
+
 async def run_eval(
     clients: list[AsyncOpenAI],
     env_id: str,
@@ -353,6 +367,12 @@ async def run_eval(
 
     if save_config.token_metadata is not None and save_config.token_metadata.enabled:
         token_rows = extract_token_metadata(results)
+        token_rows = filter_token_metadata_examples(
+            token_rows=token_rows,
+            example_ids=results.example_id,
+            max_examples=save_config.token_metadata.max_examples,
+            seed=save_config.token_metadata.seed,
+        )
         token_path = save_config.token_metadata.path or (
             get_step_path(get_eval_dir(output_dir), ckpt_step) / env_name_or_id / "token_metadata"
         )
