@@ -373,8 +373,10 @@ async def run_eval(
             max_examples=save_config.token_metadata.max_examples,
             seed=save_config.token_metadata.seed,
         )
-        token_path = save_config.token_metadata.path or (
-            get_step_path(get_eval_dir(output_dir), ckpt_step) / env_name_or_id / "token_metadata"
+        token_path = (
+            get_step_path(save_config.token_metadata.path, ckpt_step) / "token_metadata"
+            if save_config.token_metadata.path
+            else get_step_path(get_eval_dir(output_dir), ckpt_step) / env_name_or_id / "token_metadata"
         )
         Dataset.from_list(token_rows).save_to_disk(token_path)
         logger.info(

@@ -196,7 +196,7 @@ class EvalSaveTokenMetadataConfig(BaseConfig):
     path: Annotated[
         Path | None,
         Field(
-            description="The path to save per-token metadata to. If None, saves under the eval output directory."
+            description="Base path to save per-token metadata under. If set, saves to <path>/step_<step>/token_metadata. If None, saves under the eval output directory."
         ),
     ] = None
 
