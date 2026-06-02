@@ -357,6 +357,9 @@ async def orchestrate(config: OrchestratorConfig):
             "perf/throughput": throughput,
             # Train reward
             "reward/mean": results_df.reward.mean(),
+            "reward/var": results_df.reward.var(ddof=0),
+            "rollout_adv/mean": results_df.advantage.mean(),
+            "rollout_adv/var": results_df.advantage.var(ddof=0),
             # Batch metrics
             "batch/solve_none": solve_none,
             "batch/solve_all": solve_all,
