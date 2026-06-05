@@ -16,6 +16,9 @@ class BatchSample(TypedDict):
     loss_mask: Bool[Tensor, "seq"]
     advantages: Float[Tensor, "seq"]
     inference_logprobs: Float[Tensor, "seq"]
+    temperature: float
+    top_p: float
+    top_k: int
 
 
 def prepare_sample(
@@ -61,16 +64,28 @@ def prepare_sample(
         "loss_mask": loss_mask,
         "position_ids": position_ids,
         "inference_logprobs": inference_logprobs,
+        "temperature": rollout["temperature"],
+        "top_p": rollout["top_p"],
+        "top_k": rollout["top_k"],
     }
 
 
-def prepare_micro_batch(samples: list[MicroBatch], temperature: float):
+def _get_micro_batch_sampling_args(samples: list[BatchSample]) -> tuple[float, float, int]:
+    sampling_args = {(sample["temperature"], sample["top_p"], sample["top_k"]) for sample in samples}
+    assert len(sampling_args) == 1, "Packed micro batches currently require shared sampling arguments."
+    return next(iter(sampling_args))
+
+
+def prepare_micro_batch(samples: list[BatchSample]):
     micro_batch = {}
 
     for key in ["input_ids", "advantages", "loss_mask", "inference_logprobs", "position_ids"]:
         micro_batch[key] = torch.stack([sample[key] for sample in samples], dim=0)
 
+    temperature, top_p, top_k = _get_micro_batch_sampling_args(samples)
     micro_batch["temperature"] = temperature
+    micro_batch["top_p"] = top_p
+    micro_batch["top_k"] = top_k
 
     return micro_batch
 
@@ -104,7 +119,7 @@ def packed_samples_into_micro_bs(samples: list[BatchSample], max_seq_len: int) -
     return micro_batches
 
 
-def prepare_micro_batch_packing(samples: list[BatchSample], max_seq_len: int, temperature: float) -> MicroBatch:
+def prepare_micro_batch_packing(samples: list[BatchSample], max_seq_len: int) -> MicroBatch:
     """
     Prepare a micro batch for packing mode. take multi sample and return a batch of shape [1, micro_bs * max_seq_len].
     Would additionally pad the batch to the max sequence length.
@@ -117,14 +132,16 @@ def prepare_micro_batch_packing(samples: list[BatchSample], max_seq_len: int, te
     for key in ["input_ids", "advantages", "loss_mask", "position_ids", "inference_logprobs"]:
         micro_batch[key] = torch.cat([sample[key] for sample in samples], dim=0).unsqueeze(0)
 
+    temperature, top_p, top_k = _get_micro_batch_sampling_args(samples)
     micro_batch["temperature"] = temperature
+    micro_batch["top_p"] = top_p
+    micro_batch["top_k"] = top_k
 
     return micro_batch
 
 
 def prepare_batch(
     rollouts: list[Rollout],
-    temperature: float,
     tokenizer: PreTrainedTokenizer,
     seq_len: int,
     num_train_workers: int,
@@ -146,9 +163,7 @@ def prepare_batch(
     ]
 
     micro_batches_list = packed_samples_into_micro_bs(all_samples, max_seq_len)
-    micro_batches = [
-        prepare_micro_batch_packing(micro_batch, max_seq_len, temperature) for micro_batch in micro_batches_list
-    ]
+    micro_batches = [prepare_micro_batch_packing(micro_batch, max_seq_len) for micro_batch in micro_batches_list]
 
     num_padding_batch = -len(micro_batches) % num_train_workers
 

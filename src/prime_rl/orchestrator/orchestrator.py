@@ -258,7 +258,6 @@ async def orchestrate(config: OrchestratorConfig):
         train_rollouts = train_task.result()
         all_data_ranks_batches = prepare_batch(
             rollouts=train_rollouts,
-            temperature=config.sampling.temperature,
             tokenizer=tokenizer,
             num_train_workers=config.num_train_workers,
             seq_len=config.seq_len,
