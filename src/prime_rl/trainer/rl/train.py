@@ -17,6 +17,7 @@ from prime_rl.trainer.rl.config import RLTrainerConfig
 from prime_rl.trainer.rl.data import DataLoader, FakeDataLoader
 from prime_rl.utils.logger import setup_logger
 from prime_rl.trainer.rl.loss import (
+    apply_top_k_top_p,
     shift_logits,
     selective_log_softmax,
     compute_entropy,
@@ -233,14 +234,23 @@ def train(config: RLTrainerConfig):
             loss_mask = micro_batch["loss_mask"].to("cuda")
             inference_logprobs = micro_batch["inference_logprobs"].to("cuda")
             temperature = micro_batch["temperature"]
+            top_p = micro_batch["top_p"]
+            top_k = micro_batch["top_k"]
 
             # Forward pass
             with maybe_record_function("forward"), maybe_activation_offloading(config.model.ac_offloading):
                 logits = forward(model, input_ids, position_ids).float().contiguous()
 
             shifted_logits = shift_logits(logits)
-            shifted_logits = shifted_logits / temperature
-            trainer_logprobs = selective_log_softmax(shifted_logits, input_ids)
+            temperature_logits = shifted_logits / temperature
+            entropy = compute_entropy(temperature_logits)
+            filtered_logits = apply_top_k_top_p(temperature_logits.clone(), top_k=top_k, top_p=top_p)
+            selected_in_support = torch.isfinite(
+                torch.gather(filtered_logits, dim=-1, index=input_ids.unsqueeze(-1)).squeeze(-1)
+            )
+            assert temperature_logits.shape == filtered_logits.shape
+            assert selected_in_support.shape == input_ids.shape
+            trainer_logprobs = selective_log_softmax(filtered_logits, input_ids)
 
             # Compute loss
             response_lengths = get_response_lengths(position_ids)
@@ -251,13 +261,11 @@ def train(config: RLTrainerConfig):
                 loss_mask=loss_mask.squeeze().split(response_lengths),
                 loss_config=config.loss,
                 loss_scale=loss_scale,
+                selected_in_support=selected_in_support.squeeze().split(response_lengths),
             )
 
-            # Compute entropy
-            entropy = compute_entropy(shifted_logits)
-
             # Delete logits and shifted_logits before backward pass to avoid memory spike
-            del logits, shifted_logits
+            del logits, shifted_logits, temperature_logits, filtered_logits
 
             # Backward pass
             with maybe_record_function("backward"):

@@ -136,6 +136,9 @@ async def generate_batch(
 class Rollout(TypedDict):
     example_id: int
     task: str  # Typically the env name
+    temperature: float
+    top_p: float
+    top_k: int
     prompt_ids: list[int]
     prompt_mask: list[int]
     completion_ids: list[int]
@@ -154,6 +157,12 @@ def make_rollouts(
     all_is_truncated: list[bool],
 ) -> list[Rollout]:
     """Processs vf.ProcessedOutputs to a list of rollouts."""
+    sampling_args = generate_outputs.metadata.sampling_args
+    extra_body = sampling_args.get("extra_body", {})
+    temperature = sampling_args.get("temperature", 1.0)
+    top_p = sampling_args.get("top_p", 1.0)
+    top_k = extra_body.get("top_k", -1)
+
     rollouts = []
     for i, (
         example_id,
@@ -185,6 +194,9 @@ def make_rollouts(
             Rollout(
                 example_id=example_id,
                 task=task,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
                 prompt_ids=prompt_ids,
                 prompt_mask=prompt_mask,
                 completion_ids=completion_ids,

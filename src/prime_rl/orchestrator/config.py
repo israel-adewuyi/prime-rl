@@ -26,6 +26,15 @@ class SamplingConfig(BaseConfig):
         ),
     ] = 1.0
 
+    top_p: Annotated[
+        float,
+        Field(
+            gt=0,
+            le=1,
+            description="Cumulative probability of the top tokens to consider during training rollouts. If 1, all tokens are considered.",
+        ),
+    ] = 1.0
+
     top_k: Annotated[
         int,
         Field(

@@ -69,7 +69,9 @@ class Buffer:
         rollouts_path = path / "rollouts"
         if rollouts_path.exists():
             rollouts_dataset = load_from_disk(rollouts_path)
-            self.rollout_buffer = [Rollout(**cast(dict, row)) for row in rollouts_dataset]
+            self.rollout_buffer = [
+                Rollout(temperature=1.0, top_p=1.0, top_k=-1, **cast(dict, row)) for row in rollouts_dataset
+            ]
 
     def sample_problems(self, n: int) -> list[dict]:
         """Samples `n` problems from the dataset using difficulty pools."""

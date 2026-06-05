@@ -54,6 +54,9 @@ def make_rollouts():
                 Rollout(
                     example_id=i,
                     task="default",
+                    temperature=1.0,
+                    top_p=1.0,
+                    top_k=-1,
                     prompt_ids=[0],
                     prompt_mask=[1],
                     completion_ids=[1],
