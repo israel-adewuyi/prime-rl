@@ -357,6 +357,8 @@ async def orchestrate(config: OrchestratorConfig):
             # Train reward
             "reward/mean": results_df.reward.mean(),
             "reward/var": results_df.reward.var(ddof=0),
+            "reward/max": results_df.reward.max(),
+            "reward/min": results_df.reward.min(),
             "rollout_adv/mean": results_df.advantage.mean(),
             "rollout_adv/var": results_df.advantage.var(ddof=0),
             # Batch metrics
