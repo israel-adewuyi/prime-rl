@@ -48,6 +48,23 @@ def test_apply_top_k_top_p_preserves_packed_shape_and_selected_support_shape():
     assert selected_in_support.tolist() == [[True, False]]
 
 
+def test_apply_top_k_top_p_accepts_token_level_sampling_args():
+    logits = torch.tensor([[[1.0, 2.0, 3.0, 4.0], [0.0, 0.0, 10.0, 0.0]]])
+    top_k = torch.tensor([[2, -1]])
+    top_p = torch.tensor([[1.0, 0.9]])
+
+    filtered = apply_top_k_top_p(logits.clone(), top_k=top_k, top_p=top_p)
+
+    assert torch.isneginf(filtered[0, 0, 0])
+    assert torch.isneginf(filtered[0, 0, 1])
+    assert filtered[0, 0, 2] == 3.0
+    assert filtered[0, 0, 3] == 4.0
+    assert torch.isneginf(filtered[0, 1, 0])
+    assert torch.isneginf(filtered[0, 1, 1])
+    assert filtered[0, 1, 2] == 10.0
+    assert torch.isneginf(filtered[0, 1, 3])
+
+
 def test_apply_top_k_top_p_support_mask_is_autograd_safe():
     logits = torch.tensor([[[0.0, 0.0, 10.0]]], requires_grad=True)
     input_ids = torch.tensor([[2]])

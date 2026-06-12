@@ -233,16 +233,16 @@ def train(config: RLTrainerConfig):
             advantages = micro_batch["advantages"].to("cuda")
             loss_mask = micro_batch["loss_mask"].to("cuda")
             inference_logprobs = micro_batch["inference_logprobs"].to("cuda")
-            temperature = micro_batch["temperature"]
-            top_p = micro_batch["top_p"]
-            top_k = micro_batch["top_k"]
+            temperature = micro_batch["temperature"].to("cuda")
+            top_p = micro_batch["top_p"].to("cuda")
+            top_k = micro_batch["top_k"].to("cuda")
 
             # Forward pass
             with maybe_record_function("forward"), maybe_activation_offloading(config.model.ac_offloading):
                 logits = forward(model, input_ids, position_ids).float().contiguous()
 
             shifted_logits = shift_logits(logits)
-            temperature_logits = shifted_logits / temperature
+            temperature_logits = shifted_logits / temperature.unsqueeze(-1)
             entropy = compute_entropy(temperature_logits)
             filtered_logits = apply_top_k_top_p(temperature_logits.clone(), top_k=top_k, top_p=top_p)
             selected_in_support = torch.isfinite(

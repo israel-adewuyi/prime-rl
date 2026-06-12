@@ -1,6 +1,10 @@
 import asyncio
+import copy
+import time
 from collections import defaultdict
+from datetime import datetime
 from itertools import cycle
+from random import Random
 from typing import TypedDict
 
 import verifiers as vf
@@ -8,6 +12,32 @@ from datasets import Dataset
 from openai import AsyncOpenAI
 
 from prime_rl.orchestrator.utils import get_semaphore
+
+
+ROLLOUT_TEMPERATURE_CHOICES = (0.6, 0.8, 1.0, 1.2, 1.4, 1.5)
+ROLLOUT_TOP_K_CHOICES = (2, 4, 8)
+
+
+def get_field(obj, field: str, default=None):
+    if isinstance(obj, dict):
+        return obj.get(field, default)
+    return getattr(obj, field, default)
+
+
+def build_rollout_sampling_args(base_sampling_args: dict, rollouts_per_example: int, rng: Random) -> list[dict]:
+    """Build per-rollout sampling args for a single prompt group."""
+    rollout_sampling_args = []
+    for _ in range(rollouts_per_example):
+        sampling_args = copy.deepcopy(base_sampling_args)
+        sampling_args["temperature"] = rng.choice(ROLLOUT_TEMPERATURE_CHOICES)
+        sampling_args.setdefault("extra_body", {})["top_k"] = rng.choice(ROLLOUT_TOP_K_CHOICES)
+        rollout_sampling_args.append(sampling_args)
+    return rollout_sampling_args
+
+
+def _extract_sampling_params(sampling_args: dict) -> tuple[float, float, int]:
+    extra_body = sampling_args.get("extra_body", {})
+    return sampling_args.get("temperature", 1.0), sampling_args.get("top_p", 1.0), extra_body.get("top_k", -1)
 
 
 def merge_metadata(generate_metadata_list: list[vf.GenerateMetadata]) -> vf.GenerateMetadata:
@@ -99,6 +129,114 @@ async def generate_group(
     )
 
 
+async def generate_group_with_per_rollout_sampling_args(
+    client: AsyncOpenAI,
+    env: vf.Environment,
+    model_name: str,
+    problem: dict,
+    rollout_sampling_args: list[dict],
+) -> vf.GenerateOutputs:
+    """Generate one prompt group with a different sampling config per rollout."""
+    from verifiers.utils.async_utils import maybe_semaphore
+    from verifiers.utils.message_utils import cleanup_messages
+    from verifiers.utils.path_utils import get_results_path
+
+    prompt = cleanup_messages(copy.deepcopy(problem["prompt"]))
+    answer = copy.deepcopy(problem.get("answer", ""))
+    task = copy.deepcopy(problem.get("task", "default"))
+    info = copy.deepcopy(problem.get("info", {}))
+    if isinstance(info, str):
+        import json
+
+        info = json.loads(info) if info else {}
+    example_id = problem["example_id"]
+
+    prompts = [copy.deepcopy(prompt) for _ in rollout_sampling_args]
+    completions = [await env.init_completion() for _ in rollout_sampling_args]
+    answers = [copy.deepcopy(answer) for _ in rollout_sampling_args]
+    tasks = [copy.deepcopy(task) for _ in rollout_sampling_args]
+    infos = [copy.deepcopy(info) for _ in rollout_sampling_args]
+    example_ids = [example_id for _ in rollout_sampling_args]
+    states = [
+        await env.init_state(prompt_i, completion_i, answer_i, task_i, info_i, example_id_i)
+        for prompt_i, completion_i, answer_i, task_i, info_i, example_id_i in zip(
+            prompts, completions, answers, tasks, infos, example_ids
+        )
+    ]
+
+    semaphore = get_semaphore() or await maybe_semaphore(-1)
+    start_time = time.time()
+    rollout_tasks = [
+        env.run_rollout(
+            semaphore,
+            client,
+            model_name,
+            prompt_i,
+            completion_i,
+            answer_i,
+            state_i,
+            task_i,
+            info_i,
+            example_id_i,
+            sampling_args_i,
+        )
+        for prompt_i, completion_i, answer_i, state_i, task_i, info_i, example_id_i, sampling_args_i in zip(
+            prompts, completions, answers, states, tasks, infos, example_ids, rollout_sampling_args
+        )
+    ]
+    rollout_results = await asyncio.gather(*rollout_tasks)
+    completions = [completion for completion, _ in rollout_results]
+    states = [state for _, state in rollout_results]
+    for state, sampling_args in zip(states, rollout_sampling_args):
+        state["sampling_args"] = sampling_args
+
+    rollout_scores = await env.rubric.score_rollouts(
+        prompts=prompts,
+        completions=completions,
+        answers=answers,
+        states=states,
+        tasks=tasks,
+        infos=infos,
+        example_ids=example_ids,
+        max_concurrent=-1,
+        apply_weights=True,
+        use_tqdm=False,
+    )
+    elapsed_ms = (time.time() - start_time) * 1000.0
+    avg_reward = sum(rollout_scores.reward) / len(rollout_scores.reward) if rollout_scores.reward else 0.0
+    avg_metrics = {
+        name: sum(values) / len(values) if values else 0.0 for name, values in rollout_scores.metrics.items()
+    }
+    metadata = vf.GenerateMetadata(
+        env_id=env.env_id,
+        env_args=env.env_args,
+        model=model_name,
+        base_url=str(client.base_url),
+        num_examples=1,
+        rollouts_per_example=len(rollout_sampling_args),
+        sampling_args=rollout_sampling_args[0],
+        avg_reward=avg_reward,
+        avg_metrics=avg_metrics,
+        state_columns=[],
+        path_to_save=get_results_path(env.env_id, model_name),
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        time_ms=elapsed_ms,
+    )
+
+    return vf.GenerateOutputs(
+        prompt=prompts,
+        completion=completions,
+        answer=answers,
+        state=states,
+        reward=rollout_scores.reward,
+        info=infos,
+        task=tasks,
+        metrics=rollout_scores.metrics,
+        metadata=metadata,
+        example_id=example_ids,
+    )
+
+
 async def generate_batch(
     clients: list[AsyncOpenAI],
     env: vf.Environment,
@@ -157,11 +295,8 @@ def make_rollouts(
     all_is_truncated: list[bool],
 ) -> list[Rollout]:
     """Processs vf.ProcessedOutputs to a list of rollouts."""
-    sampling_args = generate_outputs.metadata.sampling_args
-    extra_body = sampling_args.get("extra_body", {})
-    temperature = sampling_args.get("temperature", 1.0)
-    top_p = sampling_args.get("top_p", 1.0)
-    top_k = extra_body.get("top_k", -1)
+    metadata_sampling_args = get_field(get_field(generate_outputs, "metadata"), "sampling_args", {})
+    states = get_field(generate_outputs, "state", [])
 
     rollouts = []
     for i, (
@@ -190,6 +325,10 @@ def make_rollouts(
         )
     ):
         metrics = {k: v[i] for k, v in generate_outputs.metrics.items()}
+        sampling_args = (
+            get_field(states[i], "sampling_args", metadata_sampling_args) if i < len(states) else metadata_sampling_args
+        )
+        temperature, top_p, top_k = _extract_sampling_params(sampling_args)
         rollouts.append(
             Rollout(
                 example_id=example_id,

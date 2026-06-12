@@ -1,4 +1,5 @@
 import asyncio
+import random
 import time
 from itertools import cycle
 from typing import NamedTuple
@@ -22,7 +23,12 @@ from prime_rl.utils.utils import (
     get_step_path,
     sync_wait_for_path,
 )
-from prime_rl.utils.vf import Rollout, generate_group, make_rollouts
+from prime_rl.utils.vf import (
+    Rollout,
+    build_rollout_sampling_args,
+    generate_group_with_per_rollout_sampling_args,
+    make_rollouts,
+)
 
 
 class InflightRolloutInfo(NamedTuple):
@@ -74,6 +80,7 @@ class Scheduler:
         self.step, self.ckpt_step = 0, 0
         self.update_weights_time, self.wait_for_ckpt_time = 0, 0
         self.sampling_args = get_sampling_args(config.sampling)
+        self.sampling_rng = random.Random(config.seed)
         self.model_name = self.config.model.name
 
     def process_generate_outputs(
@@ -124,14 +131,18 @@ class Scheduler:
         problem = self.buffer.sample_problems(n=1)[0]
         if client is None:
             client = next(self.cycle_clients)
+        rollout_sampling_args = build_rollout_sampling_args(
+            base_sampling_args=self.sampling_args,
+            rollouts_per_example=self.config.rollouts_per_example,
+            rng=self.sampling_rng,
+        )
         group_rollout_request = asyncio.create_task(
-            generate_group(
+            generate_group_with_per_rollout_sampling_args(
                 client=client,
                 env=self.env,
                 model_name=self.model_name,
                 problem=problem,
-                rollouts_per_example=self.config.rollouts_per_example,
-                sampling_args=self.sampling_args,
+                rollout_sampling_args=rollout_sampling_args,
             )
         )
         await asyncio.sleep(0)

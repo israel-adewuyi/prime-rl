@@ -16,9 +16,9 @@ class BatchSample(TypedDict):
     loss_mask: Bool[Tensor, "seq"]
     advantages: Float[Tensor, "seq"]
     inference_logprobs: Float[Tensor, "seq"]
-    temperature: float
-    top_p: float
-    top_k: int
+    temperature: Float[Tensor, "seq"]
+    top_p: Float[Tensor, "seq"]
+    top_k: Int[Tensor, "seq"]
 
 
 def prepare_sample(
@@ -47,16 +47,20 @@ def prepare_sample(
     ).float()
     position_ids = torch.arange(len(input_ids)).long()
     advantages = torch.tensor(rollout["advantage"]).repeat(len(input_ids)).float()
+    temperature = torch.full((len(input_ids),), rollout["temperature"], dtype=torch.float)
+    top_p = torch.full((len(input_ids),), rollout["top_p"], dtype=torch.float)
+    top_k = torch.full((len(input_ids),), rollout["top_k"], dtype=torch.long)
 
     if len(input_ids) > seq_len:
-        # We should never truncate as it would create a really bad learning signal. Instead, always set the maximum sequence length
-        # on the inference worker accordingly, e.g. by setting the `max_tokens` parameter.
+        # We should never truncate as it would create a really bad learning signal. Instead, always set the
+        # maximum sequence length on the inference worker accordingly, e.g. by setting the `max_tokens` parameter.
         raise ValueError(
             f"Number of tokens {len(input_ids)} is greater than sequence length {seq_len}. This should not happen."
         )
 
     assert len(input_ids) == len(advantages) == len(loss_mask) == len(position_ids) == len(inference_logprobs), (
-        f"input_ids: {len(input_ids)}, advantages: {len(advantages)}, loss_mask: {len(loss_mask)}, position_ids: {len(position_ids)}, inference_logprobs: {len(inference_logprobs)}"
+        f"input_ids: {len(input_ids)}, advantages: {len(advantages)}, loss_mask: {len(loss_mask)}, "
+        f"position_ids: {len(position_ids)}, inference_logprobs: {len(inference_logprobs)}"
     )
     return {
         "input_ids": input_ids,
@@ -64,28 +68,26 @@ def prepare_sample(
         "loss_mask": loss_mask,
         "position_ids": position_ids,
         "inference_logprobs": inference_logprobs,
-        "temperature": rollout["temperature"],
-        "top_p": rollout["top_p"],
-        "top_k": rollout["top_k"],
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
     }
-
-
-def _get_micro_batch_sampling_args(samples: list[BatchSample]) -> tuple[float, float, int]:
-    sampling_args = {(sample["temperature"], sample["top_p"], sample["top_k"]) for sample in samples}
-    assert len(sampling_args) == 1, "Packed micro batches currently require shared sampling arguments."
-    return next(iter(sampling_args))
 
 
 def prepare_micro_batch(samples: list[BatchSample]):
     micro_batch = {}
 
-    for key in ["input_ids", "advantages", "loss_mask", "inference_logprobs", "position_ids"]:
+    for key in [
+        "input_ids",
+        "advantages",
+        "loss_mask",
+        "inference_logprobs",
+        "position_ids",
+        "temperature",
+        "top_p",
+        "top_k",
+    ]:
         micro_batch[key] = torch.stack([sample[key] for sample in samples], dim=0)
-
-    temperature, top_p, top_k = _get_micro_batch_sampling_args(samples)
-    micro_batch["temperature"] = temperature
-    micro_batch["top_p"] = top_p
-    micro_batch["top_k"] = top_k
 
     return micro_batch
 
@@ -93,7 +95,8 @@ def prepare_micro_batch(samples: list[BatchSample]):
 def packed_samples_into_micro_bs(samples: list[BatchSample], max_seq_len: int) -> list[list[BatchSample]]:
     """
     Pack samples into micro_batch efficiently.
-    We follow the First Fit Decreasing algorithm to pack the samples into bins and minimize potential padding while never truncating.
+    We follow the First Fit Decreasing algorithm to pack the samples into bins and minimize potential padding while
+    never truncating.
     """
     sorted_samples = sorted(samples, key=lambda x: len(x["input_ids"]), reverse=True)
 
@@ -129,13 +132,17 @@ def prepare_micro_batch_packing(samples: list[BatchSample], max_seq_len: int) ->
         "Total tokens of samples is greater than max sequence length"
     )
 
-    for key in ["input_ids", "advantages", "loss_mask", "position_ids", "inference_logprobs"]:
+    for key in [
+        "input_ids",
+        "advantages",
+        "loss_mask",
+        "position_ids",
+        "inference_logprobs",
+        "temperature",
+        "top_p",
+        "top_k",
+    ]:
         micro_batch[key] = torch.cat([sample[key] for sample in samples], dim=0).unsqueeze(0)
-
-    temperature, top_p, top_k = _get_micro_batch_sampling_args(samples)
-    micro_batch["temperature"] = temperature
-    micro_batch["top_p"] = top_p
-    micro_batch["top_k"] = top_k
 
     return micro_batch
 
@@ -167,8 +174,9 @@ def prepare_batch(
 
     num_padding_batch = -len(micro_batches) % num_train_workers
 
-    # because of fsdp we need to make sure that each data ran has the same number of micro batches otherwise training will hang.
-    # We create fake micro batches to fill the gap with real data but zero advantages, they would not contribute to the loss.
+    # because of fsdp we need to make sure that each data ran has the same number of micro batches otherwise training
+    # will hang. We create fake micro batches to fill the gap with real data but zero advantages; they would not
+    # contribute to the loss.
     if num_train_workers > 1 and num_padding_batch > 0:
         padded_batch = copy.deepcopy(micro_batches[0])
         padded_batch["advantages"] = torch.zeros_like(padded_batch["advantages"])

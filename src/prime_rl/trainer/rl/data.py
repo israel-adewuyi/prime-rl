@@ -17,11 +17,9 @@ class MicroBatch(TypedDict):
     advantages: Float[Tensor, "batch seq"]
     inference_logprobs: Float[Tensor, "batch seq"]
     loss_mask: Bool[Tensor, "batch seq"]
-
-    # Batch level
-    temperature: float
-    top_p: float
-    top_k: int
+    temperature: Float[Tensor, "batch seq"]
+    top_p: Float[Tensor, "batch seq"]
+    top_k: Int[Tensor, "batch seq"]
 
 
 class FakeDataLoader:
@@ -49,9 +47,9 @@ class FakeDataLoader:
             "position_ids": torch.cat([torch.arange(self.seq_len)]).unsqueeze(0),
             "advantages": torch.randn(self.seq_len).unsqueeze(0),
             "inference_logprobs": torch.randn(self.seq_len).unsqueeze(0),
-            "temperature": 1.0,
-            "top_p": 1.0,
-            "top_k": -1,
+            "temperature": torch.ones(self.seq_len).unsqueeze(0),
+            "top_p": torch.ones(self.seq_len).unsqueeze(0),
+            "top_k": torch.full((self.seq_len,), -1, dtype=torch.long).unsqueeze(0),
             "loss_mask": torch.ones(self.seq_len, dtype=torch.bool).unsqueeze(0),
         }
 

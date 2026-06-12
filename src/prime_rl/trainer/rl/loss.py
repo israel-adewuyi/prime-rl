@@ -45,19 +45,30 @@ def _apply_top_k_top_p_2d(logits: torch.Tensor, k: torch.Tensor | None, p: torch
     return logits
 
 
-def apply_top_k_top_p(logits: torch.Tensor, top_k: int, top_p: float) -> torch.Tensor:
+def apply_top_k_top_p(logits: torch.Tensor, top_k: int | torch.Tensor, top_p: float | torch.Tensor) -> torch.Tensor:
     """Apply vLLM-style top-k/top-p masking to logits with shape [batch, seq, vocab]."""
     batch, seq, vocab = logits.shape
     flat_logits = logits.reshape(batch * seq, vocab)
     device = flat_logits.device
 
     k = None
-    if top_k is not None and 0 < top_k < vocab:
-        k = torch.full((flat_logits.shape[0],), top_k, dtype=torch.long, device=device)
+    if top_k is not None:
+        if torch.is_tensor(top_k):
+            k = top_k.to(device=device, dtype=torch.long).reshape(-1)
+            k = torch.where((0 < k) & (k < vocab), k, torch.full_like(k, vocab))
+            if torch.all(k == vocab):
+                k = None
+        elif 0 < top_k < vocab:
+            k = torch.full((flat_logits.shape[0],), top_k, dtype=torch.long, device=device)
 
     p = None
-    if top_p is not None and top_p < 1.0:
-        p = torch.full((flat_logits.shape[0],), top_p, dtype=flat_logits.dtype, device=device)
+    if top_p is not None:
+        if torch.is_tensor(top_p):
+            p = top_p.to(device=device, dtype=flat_logits.dtype).reshape(-1)
+            if torch.all(p >= 1.0):
+                p = None
+        elif top_p < 1.0:
+            p = torch.full((flat_logits.shape[0],), top_p, dtype=flat_logits.dtype, device=device)
 
     if k is None and p is None:
         return logits

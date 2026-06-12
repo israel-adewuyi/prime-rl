@@ -54,28 +54,30 @@ def test_prepare_batch_balances_micro_batches_across_workers(
     for batch in flat_batches[: len(rollouts)]:
         assert torch.count_nonzero(batch["advantages"]) == 4
         assert torch.count_nonzero(batch["loss_mask"]) == 4
-        assert batch["temperature"] == 0.5
-        assert batch["top_p"] == 0.9
-        assert batch["top_k"] == 8
+        assert torch.equal(batch["temperature"], torch.full((1, 4), 0.5))
+        assert torch.equal(batch["top_p"], torch.full((1, 4), 0.9))
+        assert torch.equal(batch["top_k"], torch.full((1, 4), 8))
 
     # Verify padded batches have zero advantages and loss mask
     for batch in flat_batches[len(rollouts) :]:
         assert torch.count_nonzero(batch["advantages"]) == 0
         assert torch.count_nonzero(batch["loss_mask"]) == 0
-        assert batch["temperature"] == 0.5
-        assert batch["top_p"] == 0.9
-        assert batch["top_k"] == 8
+        assert torch.equal(batch["temperature"], torch.full((1, 4), 0.5))
+        assert torch.equal(batch["top_p"], torch.full((1, 4), 0.9))
+        assert torch.equal(batch["top_k"], torch.full((1, 4), 8))
 
 
-def test_prepare_batch_rejects_mixed_sampling_args_in_packed_micro_batch():
+def test_prepare_batch_allows_mixed_sampling_args_in_packed_micro_batch():
     tokenizer = MagicMock(spec=PreTrainedTokenizer)
     rollouts = [_make_rollout(0), _make_rollout(1)]
     rollouts[1]["top_p"] = 0.8
 
-    with pytest.raises(AssertionError, match="shared sampling arguments"):
-        prepare_batch(
-            rollouts=rollouts,
-            tokenizer=tokenizer,
-            seq_len=8,
-            num_train_workers=1,
-        )
+    batches_per_gpu = prepare_batch(
+        rollouts=rollouts,
+        tokenizer=tokenizer,
+        seq_len=8,
+        num_train_workers=1,
+    )
+
+    batch = batches_per_gpu[0][0]
+    assert torch.allclose(batch["top_p"], torch.tensor([[0.9] * 4 + [0.8] * 4]))
