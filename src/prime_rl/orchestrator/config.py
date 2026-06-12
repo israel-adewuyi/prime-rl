@@ -3,7 +3,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, Field, model_validator
 
-from prime_rl.utils.config import ClientConfig, LogConfig, ModelConfig, WandbMonitorConfig, TensorboardMonitorConfig
+from prime_rl.utils.config import ClientConfig, LogConfig, ModelConfig, TensorboardMonitorConfig, WandbMonitorConfig
 from prime_rl.utils.pydantic_config import BaseConfig, BaseSettings
 
 
@@ -40,7 +40,7 @@ class SamplingConfig(BaseConfig):
         Field(
             description="Number of top tokens to consider during training rollouts. If -1, all tokens are considered.",
         ),
-    ] = 8
+    ] = -1
 
     max_tokens: Annotated[
         int | None,
@@ -392,9 +392,9 @@ class BufferConfig(BaseConfig):
 class AdvantageConfig(BaseConfig):
     type: Literal["default", "grpo", "max_rl"] = "default"
     length_weighted_mean: bool = False
-    eps: Annotated[float, Field(gt=0, description="Epsilon added to the normalization denominator for GRPO and MaxRL advantages.")] = (
-        1e-6
-    )
+    eps: Annotated[
+        float, Field(gt=0, description="Epsilon added to the normalization denominator for GRPO and MaxRL advantages.")
+    ] = 1e-6
 
     @model_validator(mode="after")
     def validate_grpo_settings(self):
