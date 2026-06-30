@@ -1,7 +1,7 @@
-max_steps = 200
-batch_size = 512
+max_steps = 150
+batch_size = 1024
 seq_len = 4096
-rollouts_per_example = 16
+rollouts_per_example = 32
 mask_truncated_completions = false
 seed = 2001
 
@@ -11,14 +11,14 @@ name = "Qwen/Qwen2.5-0.5B-Instruct"
 [wandb]
 platform = "tensorboard"
 project = "AS_to_100"
-name = "orch_dppo_lr=2e6_temp=1_topP=1_topK=8_r4"
+name = "orch_which_topk_and_support?"
 
 [[env]]
 id = "alphabet-sort"
 args = { min_turns = 2, max_turns = 2, seed=2001 }
 
 [sampling]
-max_tokens = 128
+max_tokens = 64
 temperature = 1.0
 seed = 2001
 
@@ -38,8 +38,11 @@ id = "alphabet-sort"
 args = {"min_turns" = 2, "max_turns"= 2, "seed"= 2001}
 
 [eval.sampling]
-max_tokens = 128
-temperature = 0.7
+max_tokens = 64
+temperature = 1.0
 top_p = 1.0
 top_k = -1
 seed = 2001
+
+[ckpt]
+interval = 5

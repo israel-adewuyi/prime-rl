@@ -1,18 +1,25 @@
-max_steps = 200
+max_steps = 150
 
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 [optim]
-lr = 2e-6
+lr = 3e-6
 
 [wandb]
 platform = "tensorboard"
 project = "AS_to_100"
-name = "train_dppo_lr=2e6_temp=1_topP=1_topK=8_r4"
+name = "train_which_topk_and_support?"
 
 [loss]
 type = "dppo"
 ratio_type = "token"
 dppo_delta = 0.2
+
+[ckpt]
+interval = 5
+
+[ckpt.weights]
+save_sharded = true
+save_format = "safetensors"
 
