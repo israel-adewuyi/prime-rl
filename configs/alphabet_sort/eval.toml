@@ -1,0 +1,20 @@
+num_examples = 16
+rollouts_per_example = 8
+use_tqdm = true
+max_concurrent = 128
+
+[sampling]
+temperature = 1.0
+top_p = 1
+max_tokens = 512
+
+[save.disk]
+
+[save.token_metadata]
+enabled = true
+top_logprobs = 128
+seed = 2001
+
+[[env]]
+id = "alphabet-sort"
+args = { min_turns = 2, max_turns = 2, seed=2001 }
