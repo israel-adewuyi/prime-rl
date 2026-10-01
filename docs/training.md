@@ -166,6 +166,17 @@ A `reasoning_effort` column in the dataset sets the renderer's `reasoning_effort
 
 If a model needs another template control, add it to that model's renderer config in `renderers` (for example a new field on the relevant `*RendererConfig`) and consume it in the renderer implementation.
 
+**Custom renderers.** A renderer can also live outside the `renderers` package. Set `name = "custom"` and point `import_path` at the class, as `my_module.Class` or `path/to/file.py:Class`; relative file paths resolve against the launch directory. The class sets `config_class` to its own `BaseRendererConfig` subclass, which validates the remaining `[renderer]` keys and declares its template controls:
+
+```toml
+[renderer]
+name = "custom"
+import_path = "my_renderers.glm53_no_thinking.NoThinkingGLM53Renderer"
+clear_thinking = true
+```
+
+The same config selects the renderer for RL under `[orchestrator.renderer]`. The [`renderers` README](https://github.com/PrimeIntellect-ai/renderers#custom-renderers) shows the class behind this example.
+
 **Renderer-backed tokenization.** SFT tokenization is renderer-only. The [`renderers`](algorithms.md#renderers) package owns message-to-token conversion and loss attribution end-to-end, so position-dependent chat templates (for example templates that strip past `<think>` blocks across user turns) do not corrupt the loss mask. `[renderer]` defaults to `name = "auto"`; set a typed renderer config only when you need model-specific template controls. Hand-coded renderers ship for Qwen3, Qwen3.5, GLM-5, GLM-4.5, Kimi K2/K2.5, MiniMax M2, DeepSeek V3, Nemotron 3, GPT-OSS, and VLM families such as Qwen3-VL/Qwen3.5.
 
 **VLM training requires a custom PrimeRL implementation.** Training a model with `[model.vlm]` set (SFT or RL) requires `model.impl = "custom"` and only works for models with a registered PrimeRL VLM class (currently Qwen3.5 dense and MoE).
