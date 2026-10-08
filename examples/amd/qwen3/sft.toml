@@ -1,0 +1,35 @@
+max_steps = 10
+matmul_precision = "highest"
+
+[model]
+name = "Qwen/Qwen3-0.6B"
+attn = "flash_attention_2"
+compile = "None"
+ac_offloading = "None"
+optim_cpu_offload = false
+cp = 1
+ep = 1
+fused_lm_head_token_chunk_size = 256
+
+[model.fusions]
+enabled = []
+
+[data]
+type = "fake"
+length = "variable"
+input_ids = "random"
+batch_size = 4
+micro_batch_size = 1
+seq_len = 512
+seed = 42
+
+[optim]
+type = "adamw"
+lr = 1e-5
+
+[ckpt]
+interval = 5
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 0

@@ -144,6 +144,8 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-amd-check/
+.venv-rocm/
 env/
 venv/
 ENV/

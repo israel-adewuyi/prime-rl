@@ -32,6 +32,7 @@ from prime_rl.utils.process import (
     DEFAULT_INFERENCE_ENV_VARS,
     DEFAULT_TRAINER_ENV_VARS,
     ProcessGroup,
+    gpu_visibility_env,
     partition_gpus,
     set_proc_title,
     torchrun_cmd,
@@ -366,7 +367,7 @@ def sft_local(config: SFTConfig):
                     **DEFAULT_INFERENCE_ENV_VARS,
                     **config.env_vars,
                     **config.inference.env_vars,
-                    "CUDA_VISIBLE_DEVICES": ",".join(map(str, infer_gpu_ids)),
+                    **gpu_visibility_env(infer_gpu_ids),
                 },
                 log_path=log_dir / "inference.log",
             )
@@ -415,7 +416,7 @@ def sft_local(config: SFTConfig):
             trainer_env["LOGURU_FORCE_COLORS"] = "1"
             trainer_env["WANDB_SHARED_LABEL"] = "trainer"
         if trainer_gpu_ids:
-            trainer_env["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, trainer_gpu_ids))
+            trainer_env.update(gpu_visibility_env(trainer_gpu_ids))
         processes.start(
             "trainer",
             torchrun_cmd(

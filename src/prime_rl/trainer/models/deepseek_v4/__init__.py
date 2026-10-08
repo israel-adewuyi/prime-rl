@@ -1,7 +1,10 @@
-from prime_rl.trainer.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
-from prime_rl.trainer.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4ForCausalLM
+import sys
 
-__all__ = [
-    "DeepseekV4Config",
-    "DeepseekV4ForCausalLM",
-]
+from transformers.utils import _LazyModule
+
+_import_structure = {
+    "configuration_deepseek_v4": ["DeepseekV4Config"],
+    "modeling_deepseek_v4": ["DeepseekV4ForCausalLM"],
+}
+
+sys.modules[__name__] = _LazyModule(__name__, __file__, _import_structure, module_spec=__spec__)

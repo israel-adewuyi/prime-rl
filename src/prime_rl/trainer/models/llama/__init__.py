@@ -1,3 +1,7 @@
-from prime_rl.trainer.models.llama.modeling_llama import LlamaForCausalLM, LlamaModel
+import sys
 
-__all__ = ["LlamaModel", "LlamaForCausalLM"]
+from transformers.utils import _LazyModule
+
+_import_structure = {"modeling_llama": ["LlamaForCausalLM", "LlamaModel"]}
+
+sys.modules[__name__] = _LazyModule(__name__, __file__, _import_structure, module_spec=__spec__)

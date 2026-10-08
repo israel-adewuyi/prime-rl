@@ -96,6 +96,9 @@ class PerfCounter:
             # Checked after GB200/GB300 to avoid false match on "GB300"
             return 2.25e15  # This is half of the FLOPS reported in torchtitan
         # AMD Instinct GPUs
+        if "MI355X" in device_name:
+            # Dense BF16: https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/product-briefs/amd-instinct-mi355x-gpu-brochure.pdf
+            return 2.5166e15
         if "MI300X" in device_name:
             # https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html
             # Peak BF16: 1307.4 TFLOPS (matrix)

@@ -37,14 +37,29 @@ DEFAULT_INFERENCE_ENV_VARS: dict[str, str] = {
 
 
 def get_physical_gpu_ids() -> list[int]:
-    """Return physical GPU IDs visible to the launcher."""
-    raw_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if raw_visible is None:
-        import pynvml
+    """Return GPU ordinals usable in child visibility masks (within ROCr's namespace on ROCm)."""
+    import torch
 
-        pynvml.nvmlInit()
-        return list(range(pynvml.nvmlDeviceGetCount()))
+    raw_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if torch.version.hip is not None:
+        raw_visible = os.environ.get("HIP_VISIBLE_DEVICES", raw_visible)
+    if raw_visible is None:
+        # ROCr visibility, when set, defines the ordinal namespace used by HIP.
+        return list(range(torch.cuda.device_count()))
+    if raw_visible.strip() in ("", "-1"):
+        return []
     return [int(token.strip()) for token in raw_visible.split(",") if token.strip()]
+
+
+def gpu_visibility_env(gpu_ids: list[int]) -> dict[str, str]:
+    """Select a component's GPUs within the launcher's ROCr visibility namespace."""
+    import torch
+
+    visible = ",".join(map(str, gpu_ids))
+    env = {"CUDA_VISIBLE_DEVICES": visible}
+    if torch.version.hip is not None:
+        env["HIP_VISIBLE_DEVICES"] = visible
+    return env
 
 
 def partition_gpus(num_infer: int, num_train: int) -> tuple[list[int], list[int]]:

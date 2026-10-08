@@ -47,19 +47,13 @@ from prime_rl.trainer.models import (
     get_custom_vlm_cls,
     supports_custom_impl,
 )
-from prime_rl.trainer.models.deepseek_v4.attention import DeepseekV4Indexer
 from prime_rl.trainer.models.fusions import (
     apply_model_fusions,
     get_fsdp_shard_placement_fn,
     write_back_loaded_packed_parameters,
 )
-from prime_rl.trainer.models.glm_moe_dsa.sparse_mla_attention import Indexer
-from prime_rl.trainer.models.layers.fp8_linear import replace_linear_with_fp8_blockwise_linear
 from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
 from prime_rl.trainer.models.layers.moe import MoE, TokenChoiceTopKRouter
-from prime_rl.trainer.models.layers.mxfp8_linear import replace_linear_with_mxfp8_linear
-from prime_rl.trainer.models.qwen3_8_flash_next.indexer import SparseAttentionIndexer
-from prime_rl.trainer.models.qwen3_8_flash_next.ngram_embedding import NGramEmbedding
 from prime_rl.trainer.moe_runtime import configure_moe_runtime
 from prime_rl.trainer.parallel_dims import ParallelDims
 from prime_rl.trainer.world import get_world
@@ -202,8 +196,18 @@ def freeze_sparse_indexer(model: nn.Module) -> None:
     logger = get_logger()
     num_frozen = 0
 
+    model_type = getattr(getattr(model.config, "text_config", model.config), "model_type", None)
+    if model_type == "deepseek_v4":
+        from prime_rl.trainer.models.deepseek_v4.attention import DeepseekV4Indexer as indexer_cls
+    elif model_type == "glm_moe_dsa":
+        from prime_rl.trainer.models.glm_moe_dsa.sparse_mla_attention import Indexer as indexer_cls
+    elif model_type in ("qwen4_exp", "qwen4_exp_text"):
+        from prime_rl.trainer.models.qwen3_8_flash_next.indexer import SparseAttentionIndexer as indexer_cls
+    else:
+        return
+
     for module in model.modules():
-        if isinstance(module, (Indexer, DeepseekV4Indexer, SparseAttentionIndexer)):
+        if isinstance(module, indexer_cls):
             for param in module.parameters():
                 param.requires_grad = False
                 num_frozen += 1
@@ -356,6 +360,8 @@ def get_model(
         ),
     )
     model_config.use_cache = False
+    if torch.version.hip is not None and model_config.model_type != "qwen3":
+        raise ValueError("The ROCm trainer profile currently supports dense Qwen3 only.")
     is_vlm_arch = is_vlm_architecture(model_config)
 
     if is_vlm_training:
@@ -564,10 +570,16 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
     language_model = get_language_model(model, override=config.vlm.language_model_attr if is_vlm_training else None)
     transformer_layers = language_model.layers
 
+    ngram_types = ()
+    if getattr(language_model.config, "model_type", None) in ("qwen4_exp", "qwen4_exp_text"):
+        from prime_rl.trainer.models.qwen3_8_flash_next.ngram_embedding import NGramEmbedding
+
+        ngram_types = (NGramEmbedding,)
+
     fullgraph = config.compile is not None and config.compile.fullgraph
     for transformer_block in transformer_layers:
         for module in transformer_block.modules():
-            if isinstance(module, NGramEmbedding) and parallel_dims.get_mesh("head").size() > 1:
+            if isinstance(module, ngram_types) and parallel_dims.get_mesh("head").size() > 1:
                 embedding = module.ngram_embedding
                 dp_mod_head_mesh = (
                     parallel_dims.world_mesh["dp_replicate", "dp_shard_mod_head"]
@@ -850,8 +862,12 @@ def apply_quantization(model: nn.Module, config: ModelConfig) -> None:
         return
 
     if isinstance(quant, FP8Config):
+        from prime_rl.trainer.models.layers.fp8_linear import replace_linear_with_fp8_blockwise_linear
+
         replace_linear_with_fp8_blockwise_linear(model, ignore_modules=quant.ignore_patterns)
     elif isinstance(quant, MXFP8Config):
+        from prime_rl.trainer.models.layers.mxfp8_linear import replace_linear_with_mxfp8_linear
+
         capability = torch.cuda.get_device_capability()
         if capability[0] < 10:
             raise ValueError(
@@ -920,6 +936,10 @@ def resolve_auto_attn(config: ModelConfig) -> None:
     """
     if config.attn != "auto":
         return
+    if torch.version.hip is not None:
+        config.attn = "flash_attention_2"
+        get_logger().info("Auto-resolved attn='auto' to 'flash_attention_2' (ROCm)")
+        return
     major, minor = torch.cuda.get_device_capability()
     if major in (10, 11):
         resolved = "flash_attention_4"
@@ -938,6 +958,19 @@ def setup_model(
     loading_from_checkpoint_later: bool = False,
 ) -> nn.Module:
     resolve_auto_attn(config)
+
+    if torch.version.hip is not None:
+        if config.attn != "flash_attention_2":
+            raise ValueError("ROCm training requires model.attn='flash_attention_2'.")
+        if config.quantization is not None:
+            raise ValueError("The ROCm training path does not support FP8/MXFP8 quantization.")
+        if config.cp != 1 or config.ep not in (1, "auto") or config.lora is not None:
+            raise ValueError("The ROCm Qwen3 profile requires cp=1, ep=1/auto, and full-parameter training.")
+
+    if config.attn == "flash_attention_2":
+        from prime_rl.trainer.models.layers.attn import get_flash_attn_func
+
+        get_flash_attn_func(2)
 
     if config.attn == "flash_attention_3" and not is_flash_attn_3_available():
         raise ValueError(

@@ -1,4 +1,5 @@
 import functools
+import os
 from dataclasses import dataclass
 from typing import Literal
 
@@ -10,24 +11,34 @@ from prime_rl.trainer.models.fusions import fuse_qkv_projections
 from .norms import RMSNorm, RMSNormConfig
 from .rotary_emb import apply_rotary_pos_emb
 
-# flash-attention-2
-try:
-    from flash_attn import flash_attn_varlen_func
-except ImportError:
-    flash_attn_varlen_func = None  # type: ignore
 
-# flash-attention-3
-try:
-    from flash_attn_interface import flash_attn_varlen_func as flash_attn_3_varlen_func
-except ImportError:
-    flash_attn_3_varlen_func = None  # type: ignore
+@functools.lru_cache
+def get_flash_attn_func(version: int):
+    if torch.version.hip is not None and version != 2:
+        raise ValueError("ROCm training requires flash_attention_2; FA3/FA4 are NVIDIA backends.")
+    if torch.version.hip is not None:
+        os.environ.setdefault("FLASH_ATTENTION_TRITON_AMD_ENABLE", "TRUE")
+    if version == 2:
+        from flash_attn import flash_attn_varlen_func as func
+    elif version == 3:
+        from flash_attn_interface import flash_attn_varlen_func as func
+    elif version == 4:
+        from flash_attn.cute import flash_attn_varlen_func as func
+    else:
+        raise ValueError(f"Unknown FlashAttention version: {version}")
+    return func
 
-try:
-    from flash_attn.cute import flash_attn_varlen_func as flash_attn_4_varlen_func
-    from flash_attn.cute.interface import _flash_attn_bwd, _flash_attn_fwd
-except ImportError:
-    flash_attn_4_varlen_func = None  # type: ignore
-    _flash_attn_bwd = _flash_attn_fwd = None  # type: ignore
+
+def flash_attn_varlen_func(*args, **kwargs):
+    return get_flash_attn_func(2)(*args, **kwargs)
+
+
+def flash_attn_3_varlen_func(*args, **kwargs):
+    return get_flash_attn_func(3)(*args, **kwargs)
+
+
+def flash_attn_4_varlen_func(*args, **kwargs):
+    return get_flash_attn_func(4)(*args, **kwargs)
 
 
 # FA4's flash_attn_varlen_func is a Python autograd.Function that Dynamo cannot trace. Inside a
@@ -44,6 +55,8 @@ def _flash_attn_4_varlen(
     window_size_left: int | None,
     window_size_right: int | None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    from flash_attn.cute.interface import _flash_attn_fwd
+
     out, lse, _, _ = _flash_attn_fwd(
         q,
         k,
@@ -79,6 +92,8 @@ def _flash_attn_4_varlen_backward(
     window_size_left: int | None,
     window_size_right: int | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    from flash_attn.cute.interface import _flash_attn_bwd
+
     dq, dk, dv = _flash_attn_bwd(
         q,
         k,

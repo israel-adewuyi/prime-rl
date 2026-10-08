@@ -1,0 +1,8 @@
+[project]
+name = "prime-rl-rocm-runtime"
+version = "0.1.0"
+requires-python = "~=3.12.0"
+dependencies = [
+    "torch==2.13.0",
+    "torchdata>=0.11.0",
+]

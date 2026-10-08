@@ -9,6 +9,14 @@ def apply_shared_vllm_patches():
     vLLM swallows plugin load failures (``load_plugins_by_group`` logs and continues), so a broken
     entry-point target silently skips ALL of these patches.
     """
+    if torch.version.hip is not None:
+        # The ROCm profile supports dense Qwen3 with filesystem weight updates.
+        # Model-specific CUDA patches import kernels even for unrelated models.
+        monkey_patch_tokenize_params_validation()
+        monkey_patch_strip_routed_experts_from_chat()
+        monkey_patch_dp_coordinator_startup_timeout()
+        return
+
     from prime_rl.inference.vllm.gpt_oss_weight_loading import patch_gpt_oss_weight_loading
     from prime_rl.inference.vllm.qwen38_weight_loading import patch_qwen38_weight_loading
 

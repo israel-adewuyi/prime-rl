@@ -137,6 +137,10 @@ def bind_process_to_gpu_numa_node() -> None:
     GPU hangs off. Must run before CPU optimizer state allocation and before the
     OMP thread pool spins up.
     """
+    if torch.version.hip is not None:
+        get_logger().info("Skipping NVML NUMA binding on ROCm; using the process's existing CPU affinity")
+        return
+
     import pynvml
 
     logger = get_logger()

@@ -32,6 +32,7 @@ from prime_rl.utils.process import (
     DEFAULT_INFERENCE_ENV_VARS,
     DEFAULT_TRAINER_ENV_VARS,
     ProcessGroup,
+    gpu_visibility_env,
     partition_gpus,
     set_proc_title,
     torchrun_cmd,
@@ -176,7 +177,7 @@ def rl_local(config: RLConfig):
                     **DEFAULT_INFERENCE_ENV_VARS,
                     **config.env_vars,
                     **config.inference.env_vars,
-                    "CUDA_VISIBLE_DEVICES": ",".join(map(str, infer_gpu_ids)),
+                    **gpu_visibility_env(infer_gpu_ids),
                 },
                 log_path=log_dir / "inference.log",
             )
@@ -254,7 +255,7 @@ def rl_local(config: RLConfig):
                 **config.trainer.env_vars,
                 **wandb_shared_env,
                 "WANDB_SHARED_LABEL": "trainer",
-                "CUDA_VISIBLE_DEVICES": ",".join(map(str, trainer_gpu_ids)),
+                **gpu_visibility_env(trainer_gpu_ids),
             },
             log_path=log_dir / "trainer.log",
         )

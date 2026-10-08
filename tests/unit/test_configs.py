@@ -74,6 +74,22 @@ def test_load_configs(config_file: Path):
     assert any(could_parse), f"No config class could be parsed from {config_file}"
 
 
+@pytest.mark.parametrize("mode,config_cls", [("sft", SFTConfig), ("rl", RLConfig)])
+@pytest.mark.parametrize("size", ["0.6b", "1.7b", "4b", "8b"])
+def test_amd_qwen3_overlays(mode, config_cls, size):
+    root = Path("examples/amd/qwen3")
+    config = cli(config_cls, args=["@", str(root / f"{mode}.toml"), "@", str(root / f"{size}.toml")])
+    model = config.model if mode == "sft" else config.trainer.model
+    assert model.name == f"Qwen/Qwen3-{size.upper()}"
+    assert model.attn == "flash_attention_2"
+    assert model.compile is None
+    assert model.cp == model.ep == 1
+    assert model.fusions.enabled == []
+    if mode == "rl":
+        assert config.inference.vllm.model == model.name
+        assert config.weight_broadcast.type == "filesystem"
+
+
 class NestedConfig(BaseConfig):
     lr: float = 1e-4
     weight_decay: float = 0.01

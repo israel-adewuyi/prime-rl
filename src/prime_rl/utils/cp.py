@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from ring_flash_attn import update_ring_flash_attn_params
 
 from prime_rl.trainer.distributed.collectives import all_gather
 from prime_rl.utils.logger import get_logger
@@ -151,6 +150,8 @@ def setup_cp_attention_params(
     )
 
     if cp_style == "ring":
+        from ring_flash_attn import update_ring_flash_attn_params
+
         update_ring_flash_attn_params(cu_seqlens, cp_group)
     elif cp_style == "ulysses":
         # Delayed import: ulysses_attn lives under trainer.models, which imports

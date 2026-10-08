@@ -1,0 +1,57 @@
+max_steps = 10
+seq_len = 1024
+
+[model]
+name = "Qwen/Qwen3-0.6B"
+
+[weight_broadcast]
+type = "filesystem"
+
+[trainer]
+matmul_precision = "highest"
+
+[trainer.model]
+attn = "flash_attention_2"
+compile = "None"
+ac_offloading = "None"
+optim_cpu_offload = false
+cp = 1
+ep = 1
+fused_lm_head_token_chunk_size = 256
+
+[trainer.model.fusions]
+enabled = []
+
+[trainer.optim]
+type = "adamw"
+lr = 1e-6
+
+[orchestrator]
+batch_size = 8
+
+[orchestrator.train]
+group_size = 4
+
+[orchestrator.train.sampling]
+max_completion_tokens = 128
+
+[[orchestrator.train.source]]
+name = "reverse-text"
+env.taskset.id = "reverse-text"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+
+[inference.vllm]
+enforce_eager = true
+dtype = "bfloat16"
+tensor_parallel_size = 1
+max_model_len = 1024
+max_num_seqs = 16
+gpu_memory_utilization = 0.5
+
+[ckpt]
+interval = 5
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1

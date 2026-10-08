@@ -1,9 +1,10 @@
-from prime_rl.trainer.models.glm4_moe.configuration_glm4_moe import Glm4MoeConfig
-from prime_rl.trainer.models.glm4_moe.modeling_glm4_moe import Glm4MoeForCausalLM, Glm4MoeModel, Glm4MoePreTrainedModel
+import sys
 
-__all__ = [
-    "Glm4MoeConfig",
-    "Glm4MoeForCausalLM",
-    "Glm4MoeModel",
-    "Glm4MoePreTrainedModel",
-]
+from transformers.utils import _LazyModule
+
+_import_structure = {
+    "configuration_glm4_moe": ["Glm4MoeConfig"],
+    "modeling_glm4_moe": ["Glm4MoeForCausalLM", "Glm4MoeModel", "Glm4MoePreTrainedModel"],
+}
+
+sys.modules[__name__] = _LazyModule(__name__, __file__, _import_structure, module_spec=__spec__)

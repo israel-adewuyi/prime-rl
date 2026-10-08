@@ -1,13 +1,10 @@
-from prime_rl.trainer.models.gpt_oss.configuration_gpt_oss import GptOssConfig
-from prime_rl.trainer.models.gpt_oss.modeling_gpt_oss import (
-    GptOssForCausalLM,
-    GptOssModel,
-    GptOssPreTrainedModel,
-)
+import sys
 
-__all__ = [
-    "GptOssConfig",
-    "GptOssForCausalLM",
-    "GptOssModel",
-    "GptOssPreTrainedModel",
-]
+from transformers.utils import _LazyModule
+
+_import_structure = {
+    "configuration_gpt_oss": ["GptOssConfig"],
+    "modeling_gpt_oss": ["GptOssForCausalLM", "GptOssModel", "GptOssPreTrainedModel"],
+}
+
+sys.modules[__name__] = _LazyModule(__name__, __file__, _import_structure, module_spec=__spec__)

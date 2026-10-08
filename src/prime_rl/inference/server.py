@@ -7,6 +7,25 @@ from prime_rl.configs.inference import InferenceConfig
 def setup_vllm_env(config: InferenceConfig):
     """Set vLLM environment variables based on config. Must be called before importing vLLM."""
 
+    import torch
+
+    if torch.version.hip is not None:
+        if config.use_deep_gemm:
+            raise ValueError("DeepGEMM is not supported by the ROCm Qwen3 profile.")
+        if config.vllm.enable_lora:
+            raise ValueError("The ROCm Qwen3 profile supports full-parameter training only.")
+        if config.weight_broadcast.type != "filesystem":
+            raise ValueError("The ROCm Qwen3 profile requires filesystem weight broadcasting.")
+        if config.deployment.type == "disaggregated" or config.kv_cache_offload is not None:
+            raise ValueError("The ROCm Qwen3 profile does not support disaggregated inference or KV-cache offload.")
+        if config.vllm.quantization is not None:
+            raise ValueError("The ROCm Qwen3 profile requires unquantized inference weights.")
+        from transformers import AutoConfig
+
+        model_config = AutoConfig.from_pretrained(config.vllm.model, trust_remote_code=config.vllm.trust_remote_code)
+        if model_config.model_type != "qwen3":
+            raise ValueError("The ROCm inference profile currently supports dense Qwen3 only.")
+
     # spawn is more robust in vLLM nightlies and Qwen3-VL (fork can deadlock with multithreaded processes)
     os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 
