@@ -514,6 +514,13 @@ class IcePopLossConfig(BaseConfig):
     adv_tau: float = Field(1.0, ge=0)
     """Temperature for the advantage term."""
 
+    score_centering: bool = False
+    """Center the ratio-masked importance-weighted score under the sampler."""
+
+    score_centering_topk: int = Field(128, ge=1)
+    """Captured head size for an untruncated sampler with a proportional tail.
+    Probabilities retain full-vocabulary normalization; sampling is not truncated."""
+
     @model_validator(mode="after")
     def validate_ratio_bounds(self):
         if self.ratio_low > self.ratio_high:
@@ -567,7 +574,8 @@ class CustomLossConfig(BaseConfig):
 
 
 LossConfig: TypeAlias = Annotated[
-    IPOLossConfig | IcePopLossConfig | PPOLossConfig | CISPOLossConfig | CustomLossConfig, Field(discriminator="type")
+    IPOLossConfig | IcePopLossConfig | PPOLossConfig | CISPOLossConfig | CustomLossConfig,
+    Field(discriminator="type"),
 ]
 
 
