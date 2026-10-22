@@ -101,7 +101,13 @@ def test_qwen3_packed_logits_gradients_and_isolation(gpu, tied):
     ):
         assert name == reference_name
         assert parameter.grad is not None and torch.isfinite(parameter.grad).all(), name
-        torch.testing.assert_close(parameter.grad, reference_parameter.grad, atol=3e-3, rtol=5e-2, msg=name)
+        torch.testing.assert_close(
+            parameter.grad,
+            reference_parameter.grad,
+            atol=3e-3,
+            rtol=5e-2,
+            msg=lambda message: f"{name}\n{message}",
+        )
     changed = tokens.clone()
     changed[:, :9] = (changed[:, :9] + 1) % 256
     with torch.no_grad():

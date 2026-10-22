@@ -5163,7 +5163,7 @@ requires-dist = [
     { name = "torchdata", marker = "sys_platform == 'linux' and extra == 'gpu'", specifier = ">=0.11.0" },
     { name = "torchtitan", marker = "sys_platform == 'linux' and extra == 'gpu'", git = "https://github.com/pytorch/torchtitan?rev=23e4dfc" },
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'gpu'", index = "https://download.pytorch.org/whl/cu130" },
-    { name = "transformers", specifier = "==5.6.2" },
+    { name = "transformers", specifier = ">=5.6.2,<6" },
     { name = "uvicorn", marker = "extra == 'dashboard'", specifier = ">=0.30" },
     { name = "uvloop", specifier = ">=0.21.0" },
     { name = "verifiers", extras = ["harbor"], editable = "deps/verifiers" },

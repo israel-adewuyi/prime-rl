@@ -220,6 +220,9 @@ class FlashAttention(nn.Module):
 
     def _compute_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, cu_seqlens, max_seqlen):
         """Run the flash attention kernel. q/k/v are [total_tokens, heads, dim]."""
+        if torch.version.hip is not None and self._flash_attn_version == 2:
+            # AMD Triton FA2 backward requires a dense token/head layout.
+            q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
         kwargs: dict = {"causal": True}
         sliding_window = getattr(self, "sliding_window", None)
         if sliding_window is not None:

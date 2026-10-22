@@ -29,6 +29,10 @@ lr = 1e-6
 [orchestrator]
 batch_size = 8
 
+[orchestrator.renderer]
+name = "qwen3"
+enable_thinking = false
+
 [orchestrator.train]
 group_size = 4
 

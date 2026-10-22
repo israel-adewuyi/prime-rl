@@ -9,6 +9,13 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 runtime_python="$VIRTUAL_ENV/bin/python"
 manifest_dir="$VIRTUAL_ENV/prime-rl-runtime"
+runtime_requirements=()
+if [[ "$mode" == rl ]]; then
+    runtime_requirements+=(
+        vllm
+        'vllm-router @ https://github.com/PrimeIntellect-ai/router/releases/download/v0.2.2/vllm_router-0.2.2-cp38-abi3-manylinux_2_28_x86_64.whl'
+    )
+fi
 
 for package in verifiers renderers pydantic-config; do
     if [[ ! -f "deps/$package/pyproject.toml" ]]; then
@@ -17,13 +24,13 @@ for package in verifiers renderers pydantic-config; do
     fi
 done
 
-uv --no-config run --no-project --active --no-sync python tools/check_rocm_runtime.py "$mode" "$manifest_dir"
+uv --no-config run --no-project --active python tools/check_rocm_runtime.py "$mode" "$manifest_dir"
 uv --no-config pip install --python "$runtime_python" \
     --constraint "$manifest_dir/runtime-constraints.txt" \
     -r environments/rocm/pyproject.toml \
     -e . -e packages/prime-rl-configs -e deps/pydantic-config \
     -e 'deps/verifiers[harbor]' -e 'deps/renderers[multimodal]' \
-    pytest pytest-asyncio packaging ninja setuptools wheel
+    pytest pytest-asyncio packaging ninja setuptools wheel "${runtime_requirements[@]}"
 
 # FA2's Triton AMD backend avoids CUDA cubins and CK architecture-specific builds.
 FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE FLASH_ATTENTION_FORCE_BUILD=TRUE \
@@ -37,5 +44,5 @@ if [[ "$mode" == rl ]]; then
 fi
 uv --no-config pip check --python "$runtime_python"
 uv --no-config pip freeze --python "$runtime_python" > "$manifest_dir/installed.txt"
-uv --no-config run --no-project --active --no-sync python -c \
+uv --no-config run --no-project --active python -c \
     'from prime_rl.trainer.model import setup_model; from prime_rl.trainer.optim import setup_optimizer; from prime_rl.trainer.models.layers.attn import get_flash_attn_func; get_flash_attn_func(2); print("Qwen3 trainer imports and FA2 backend loaded")'

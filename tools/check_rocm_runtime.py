@@ -34,9 +34,20 @@ def main():
         if distribution.metadata["Name"]
     }
     args.output.mkdir(parents=True, exist_ok=True)
-    # Protect the entire pre-provisioned runtime, including its matching Triton.
+    # Preserve the compiled GPU stack and vLLM's provisioned Transformers version.
+    # Application packages must remain resolvable against PrimeRL's dependencies.
+    protected_packages = {
+        "torch", "torchvision", "torchaudio", "triton", "triton-rocm", "vllm",
+        "amd-quark", "amdsmi", "aiter", "conch-triton-kernels", "tilelang",
+        "apache-tvm-ffi", "compressed-tensors", "xgrammar",
+        "mooncake-transfer-engine-rocm", "transformers",
+    }
     (args.output / "runtime-constraints.txt").write_text(
-        "".join(f"{name}=={version}\n" for name, version in sorted(versions.items())), encoding="utf-8"
+        "".join(
+            f"{name}=={version}\n"
+            for name, version in sorted(versions.items())
+            if name.lower().replace("_", "-") in protected_packages
+        ), encoding="utf-8"
     )
     manifest = {"python": platform.python_version(), "hip": torch.version.hip, "packages": versions}
     (args.output / "runtime.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

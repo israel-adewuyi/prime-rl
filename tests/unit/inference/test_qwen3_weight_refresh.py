@@ -7,7 +7,9 @@ import torch
 
 
 @pytest.mark.gpu
-def test_qwen3_filesystem_weight_refresh(tmp_path):
+def test_qwen3_filesystem_weight_refresh(tmp_path, monkeypatch):
+    # ROCm workers must not inherit the parent's initialized HIP runtime via fork.
+    monkeypatch.setenv("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
     if not torch.cuda.is_available():
         pytest.skip("Requires a CUDA or ROCm GPU and the matching vLLM build")
 
