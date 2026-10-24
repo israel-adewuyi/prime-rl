@@ -18,7 +18,10 @@ weight_decay = 0.0
 
 [gradient_capture]
 steps = [1, 2]
-output_dir = "captured"
 verify = true
 verify_rtol = 0.05
 verify_atol = 0.000001
+
+[ckpt]
+interval = 2
+save_gradients_and_updates = true

@@ -138,7 +138,6 @@ def test_prepare_batch_preserves_branch_identity(make_training_example, identifi
         example = make_training_example()
         example.trace_id = f"trace-{i}"
         example.branch_index = i
-        example.group_id = f"group-{i // 2}"
         examples.append(example)
     examples.append(make_training_example())  # no identity -> sentinels
 
@@ -150,41 +149,37 @@ def test_prepare_batch_preserves_branch_identity(make_training_example, identifi
         pad_to_multiple_of=8,
     )
 
-    seen: set[tuple[str, int, str]] = set()
+    seen: set[tuple[str, int]] = set()
     for batch in _flatten_batches(batches_per_gpu):
         if not _has_loss_tokens(batch):
             # Dummies are copies of real batches; identity must not survive the copy.
             assert batch.trace_ids is None and batch.branch_indices is None
-            assert batch.group_ids is None
             continue
-        assert len(batch.trace_ids) == len(batch.branch_indices) == len(batch.group_ids) == len(batch.sequence_lengths)
-        seen.update(zip(batch.trace_ids, batch.branch_indices, batch.group_ids, strict=True))
-    assert seen == {(f"trace-{i}", i, f"group-{i // 2}") for i in range(identified_count)} | {("", -1, "")}
+        assert len(batch.trace_ids) == len(batch.branch_indices) == len(batch.sequence_lengths)
+        seen.update(zip(batch.trace_ids, batch.branch_indices, strict=True))
+    assert seen == {(f"trace-{i}", i) for i in range(identified_count)} | {("", -1)}
 
 
 def test_prepare_sample_truncation_keeps_identity():
     sample = make_sized_training_example(10)
     sample.trace_id = "trace-x"
     sample.branch_index = 2
-    sample.group_id = "group-x"
     micro_batch = prepare_sample(sample, seq_len=4)
     assert len(micro_batch.input_ids) == 4
     assert micro_batch.trace_ids == ["trace-x"]
     assert micro_batch.branch_indices == [2]
-    assert micro_batch.group_ids == ["group-x"]
 
 
-def test_prompt_groups_survive_packing_and_transport():
+def test_sequence_identity_survives_packing_and_transport():
     examples = []
     expected = {}
-    for i, (length, group_id) in enumerate([(6, "group-a"), (3, "group-a"), (5, "group-b"), (3, None)]):
+    for i, length in enumerate([6, 3, 5, 3]):
         example = make_sized_training_example(length, env_name=f"env-{i}")
         example.trace_id = f"trace-{i}"
         example.branch_index = i
-        example.group_id = group_id
         example.token_ids = [i + 10] * length
         examples.append(example)
-        expected[example.trace_id] = (i, group_id or "", length, i + 10, example.env_name)
+        expected[example.trace_id] = (i, length, i + 10, example.env_name)
 
     batches = prepare_batch(
         examples, seq_len=8, num_train_workers=1, bin_cost=build_bin_cost(None), pad_to_multiple_of=4
@@ -192,49 +187,21 @@ def test_prompt_groups_survive_packing_and_transport():
     assert len(batches) > 1
     assert any(len(batch.sequence_lengths) > 1 for batch in batches)
     seen = set()
-    group_a_batches = set()
-    for batch_index, batch in enumerate(batches):
+    for batch in batches:
         received = msgspec.msgpack.decode(msgspec.msgpack.encode(batch), type=MicroBatch)
         offset = 0
-        for trace_id, branch_index, group_id, packed_length in zip(
-            received.trace_ids, received.branch_indices, received.group_ids, received.sequence_lengths, strict=True
+        for trace_id, branch_index, packed_length in zip(
+            received.trace_ids, received.branch_indices, received.sequence_lengths, strict=True
         ):
-            expected_branch, expected_group, source_length, token_id, env_name = expected[trace_id]
+            expected_branch, source_length, token_id, env_name = expected[trace_id]
             assert branch_index == expected_branch
-            assert group_id == expected_group
             assert received.input_ids[offset : offset + source_length] == [token_id] * source_length
             assert received.env_names[offset : offset + source_length] == [env_name] * source_length
             assert not any(received.loss_mask[offset + source_length : offset + packed_length])
             assert trace_id not in seen
             seen.add(trace_id)
-            if group_id == "group-a":
-                group_a_batches.add(batch_index)
             offset += packed_length
     assert seen == set(expected)
-    assert len(group_a_batches) == 2
-
-
-@pytest.mark.parametrize("payload_type", [TrainingSample, MicroBatch])
-def test_prompt_group_wire_field_is_optional(make_training_example, payload_type):
-    sample = make_training_example()
-    sample.trace_id = "trace-x"
-    sample.branch_index = 2
-    sample.group_id = "group-x"
-    payload = sample if payload_type is TrainingSample else prepare_sample(sample, seq_len=4)
-    encoded = msgspec.msgpack.encode(payload)
-    received = msgspec.msgpack.decode(encoded, type=payload_type)
-    field_name = "group_id" if payload_type is TrainingSample else "group_ids"
-    assert getattr(received, field_name) == getattr(payload, field_name)
-
-    fields = msgspec.msgpack.decode(encoded)
-    old_payload = msgspec.msgpack.decode(msgspec.msgpack.encode(fields[:-1]), type=payload_type)
-    assert getattr(old_payload, field_name) is None
-    if payload_type is TrainingSample:
-        assert old_payload.trace_id == "trace-x"
-        assert old_payload.branch_index == 2
-    else:
-        assert old_payload.trace_ids == ["trace-x"]
-        assert old_payload.branch_indices == [2]
 
 
 def test_randomized_packing_invariants():

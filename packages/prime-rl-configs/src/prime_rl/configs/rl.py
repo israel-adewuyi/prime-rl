@@ -87,6 +87,9 @@ class SharedCheckpointConfig(BaseConfig):
     interval: int | None = None
     """Interval at which to save checkpoints."""
 
+    save_gradients_and_updates: bool = False
+    """Save batch gradients and applied updates with RL checkpoints. Propagated to the trainer only."""
+
     keep_last: int | None = Field(None, ge=1)
     """Keep at most this many recent step checkpoints on disk. If None, never clean old checkpoints based on recency."""
 

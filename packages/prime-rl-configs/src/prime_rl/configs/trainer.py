@@ -503,6 +503,9 @@ class CheckpointConfig(BaseConfig):
     interval: int | None = Field(None, ge=1)
     """Interval at which to save the training checkpoint. If None, only checkpoints at the end of training."""
 
+    save_gradients_and_updates: bool = False
+    """Save pre-clipping batch gradients and actual parameter updates alongside RL checkpoints; single trainer GPU."""
+
     keep_last: int | None = Field(None, ge=1)
     """Keep at most this many recent step checkpoints on disk. If None, never clean old checkpoints based on recency."""
 
@@ -615,10 +618,7 @@ class DataLoaderConfig(BaseConfig):
 
 class GradientCaptureConfig(BaseConfig):
     steps: list[Annotated[int, Field(ge=1)]] = Field(min_length=1)
-    """Trainer update numbers at which to save every prompt's gradient before clipping."""
-
-    output_dir: Path | None = None
-    """Capture directory, relative to the trainer output directory unless absolute. Defaults to prompt_gradients."""
+    """Trainer update numbers at which to log online per-rollout gradient statistics before clipping."""
 
     verify: bool = False
     """Check that capture preserves accumulated optimizer gradients and reconstructs the batch gradient."""
@@ -644,7 +644,7 @@ class TrainerConfig(BaseConfig):
     data: DataLoaderConfig = DataLoaderConfig()
 
     gradient_capture: GradientCaptureConfig | None = None
-    """Save full, batch-normalized prompt gradients on selected updates; single-GPU eager training only."""
+    """Log batch-normalized rollout gradient statistics on selected updates; single-GPU eager training only."""
 
     loss: LossConfig = IPOLossConfig()
     """Loss config for the rl loss component (see ``setup_rl_loss_fn``). The ce / ref_kl components are fixed and do not read this."""
@@ -701,6 +701,12 @@ class TrainerConfig(BaseConfig):
     """Extra environment variables for the trainer process(es). Merged on top of the launcher defaults."""
 
     @model_validator(mode="after")
+    def validate_checkpoint_updates(self):
+        if self.ckpt and self.ckpt.save_gradients_and_updates and self.model.full_offload is not None:
+            raise ValueError("ckpt.save_gradients_and_updates requires model.full_offload=None")
+        return self
+
+    @model_validator(mode="after")
     def validate_gradient_capture(self):
         if self.gradient_capture is None:
             return self
@@ -711,8 +717,6 @@ class TrainerConfig(BaseConfig):
                 raise ValueError(f"gradient_capture requires model.{name}=None")
         if self.model.fsdp_cpu_offload:
             raise ValueError("gradient_capture requires model.fsdp_cpu_offload=false")
-        if self.data.fake is not None:
-            raise ValueError("gradient_capture requires real prompt-group IDs; data.fake is unsupported")
         if self.max_steps is not None and max(self.gradient_capture.steps) > self.max_steps:
             raise ValueError("gradient_capture.steps must not exceed max_steps")
         return self

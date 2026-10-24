@@ -1,7 +1,6 @@
 """LFM2 checkpoint compatibility, packed boundaries, and repeated backward checks."""
 
 import copy
-import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -85,7 +84,7 @@ def test_lfm2_hf_equivalence_and_packed_isolation(lfm2_device, tied):
 
 
 @pytest.mark.parametrize("chunk_size", [None, 4])
-def test_lfm2_prompt_derivatives_then_backward(lfm2_device, chunk_size):
+def test_lfm2_sequence_derivatives_then_backward(lfm2_device, chunk_size):
     torch.manual_seed(62)
     dtype = torch.bfloat16 if lfm2_device.type == "cuda" else torch.float32
     config = tiny_lfm2_config(attn="flash_attention_2" if lfm2_device.type == "cuda" else "sdpa")
@@ -156,7 +155,8 @@ def test_lfm2_fsdp_capture_preserves_training(lfm2_process_group, tmp_path):
     from prime_rl.configs.trainer import TrainerConfig
     from prime_rl.trainer.model import setup_fsdp
     from prime_rl.trainer.parallel_dims import ParallelDims
-    from prime_rl.trainer.rl.gradients import PromptGradientCapture
+    from prime_rl.trainer.rl.gradients import RolloutGradientCapture
+    from prime_rl.trainer.rl.loss import compute_loss, setup_rl_loss_fn, shift_tensor_left, shift_tensor_right
     from prime_rl.utils.config import cli
 
     fixture = Path(__file__).resolve().parents[3] / "fixtures" / "gradient_capture" / "fsdp.toml"
@@ -178,7 +178,7 @@ def test_lfm2_fsdp_capture_preserves_training(lfm2_process_group, tmp_path):
     for step in range(1, trainer.max_steps + 1):
         capture = None
         if step in trainer.gradient_capture.steps:
-            capture = PromptGradientCapture(captured, trainer.gradient_capture, tmp_path, step, {"tokens": 24.0})
+            capture = RolloutGradientCapture(captured, trainer.gradient_capture)
         for micro in range(2):
             generator = torch.Generator().manual_seed(step * 100 + micro)
             tokens = torch.randint(1, 128, (1, 12), generator=generator).cuda()
@@ -186,27 +186,44 @@ def test_lfm2_fsdp_capture_preserves_training(lfm2_process_group, tmp_path):
             positions = torch.cat([torch.arange(5), torch.arange(7)]).unsqueeze(0).cuda()
             batch = {
                 "sequence_lengths": [5, 7],
-                "group_ids": ["prompt-a", "prompt-b"],
                 "trace_ids": [f"a-{micro}", f"b-{micro}"],
                 "branch_indices": [0, 0],
                 "env_names": ["lfm2-test"] * 12,
-                "loss_mask": torch.ones_like(tokens, dtype=torch.bool),
+                "loss_mask": positions > 0,
+                "rl_weights": None,
                 "ce_weights": None,
                 "ref_kl_weights": None,
             }
+            advantages = torch.cat([torch.ones(5), -torch.ones(7)]).cuda()
             for model in (baseline, captured):
                 if model is captured and capture is not None:
                     capture.before_forward()
                 outputs = model(
                     tokens,
                     position_ids=positions,
-                    labels=tokens.roll(-1, dims=1),
+                    labels=shift_tensor_left(tokens),
                     temperature=torch.ones_like(tokens, dtype=torch.float32),
                     seq_lens=lengths,
                 )
-                parts = outputs["logprobs"].split([5, 7], dim=1)
-                sequence_losses = [-parts[0].sum() / 24, 0.5 * parts[1].sum() / 24]
-                loss = sum(sequence_losses)
+                logprobs = shift_tensor_right(outputs["logprobs"]).flatten()
+                if model is baseline:
+                    inference_logprobs = logprobs.detach()
+                sequence_losses = []
+                loss, _ = compute_loss(
+                    trainer_logprobs=list(logprobs.split([5, 7])),
+                    inference_logprobs=list(inference_logprobs.split([5, 7])),
+                    ref_logprobs=None,
+                    advantages=list(advantages.split([5, 7])),
+                    loss_mask=list(batch["loss_mask"].flatten().split([5, 7])),
+                    rl_weights=None,
+                    ce_weights=None,
+                    ref_kl_weights=None,
+                    rl_loss_fn=setup_rl_loss_fn(trainer.loss),
+                    rl_scale=20,
+                    ce_scale=1,
+                    ref_kl_scale=1,
+                    per_sequence_losses=sequence_losses,
+                )
                 if model is captured and capture is not None:
                     capture.capture_microbatch(loss, sequence_losses, batch)
                 loss.backward()
@@ -216,11 +233,14 @@ def test_lfm2_fsdp_capture_preserves_training(lfm2_process_group, tmp_path):
                     param.grad.to_local(), baseline_params[name].grad.to_local(), rtol=0, atol=0, msg=name
                 )
         if capture is not None:
-            directory = capture.finish_step()
-            manifest = json.loads((directory / "manifest.json").read_text())
-            assert manifest["verification"]["checked"]
-            assert manifest["microbatches"] == 2
-            assert {group["group_id"] for group in manifest["groups"]} == {"prompt-a", "prompt-b"}
+            metrics = capture.finish_step()
+            assert metrics["snr/count"] == 4
+            assert metrics["snr/mean_norm"] > 0
+            assert metrics["snr/variance"] > 0
+            assert metrics["snr/value"] == pytest.approx(metrics["snr/mean_norm"] ** 2 / metrics["snr/variance"])
+            assert capture.statistics.gradient_sum == {}
+            assert capture.statistics.count == 0
+        assert not list(tmp_path.rglob("*.pt"))
         baseline_optim.step()
         captured_optim.step()
         for name, param in captured_params.items():

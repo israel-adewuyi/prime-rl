@@ -1,4 +1,3 @@
-import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -11,8 +10,10 @@ from torch.distributed.tensor import DTensor
 
 from prime_rl.configs.trainer import TrainerConfig
 from prime_rl.trainer.rl.data import TensorMicroBatch
-from prime_rl.trainer.rl.gradients import PromptGradientCapture
+from prime_rl.trainer.rl.gradients import RolloutGradientCapture
 from prime_rl.trainer.rl.loss import compute_loss, setup_rl_loss_fn
+from prime_rl.trainer.update_capture import CheckpointUpdateCapture, checkpoint_update_capture_enabled
+from prime_rl.trainer.utils import clip_grad_norm_
 from prime_rl.utils.config import cli
 
 pytestmark = [pytest.mark.gpu]
@@ -96,10 +97,10 @@ def _microbatches(step: int) -> list[tuple[Tensor, TensorMicroBatch]]:
     generator = torch.Generator().manual_seed(100 + step)
     batches = []
     layout = [
-        ([2, 2, 3], ["prompt-a", "prompt-a", "prompt-b"], [1.0, -0.25, 1.0]),
-        ([2, 3, 2], ["prompt-b", "prompt-a", "prompt-b"], [-0.25, -0.75, -0.75]),
+        ([2, 2, 3], [1.0, -0.25, 1.0]),
+        ([2, 3, 2], [-0.25, -0.75, -0.75]),
     ]
-    for microbatch_index, (lengths, group_ids, sequence_advantages) in enumerate(layout):
+    for microbatch_index, (lengths, sequence_advantages) in enumerate(layout):
         token_count = sum(lengths)
         input_ids = torch.randint(0, 7, (1, token_count), generator=generator).cuda()
         loss_mask = torch.tensor([[position > 0 for length in lengths for position in range(length)]], device="cuda")
@@ -126,7 +127,6 @@ def _microbatches(step: int) -> list[tuple[Tensor, TensorMicroBatch]]:
             sequence_lengths=lengths,
             trace_ids=[f"step-{step}-micro-{microbatch_index}-sequence-{i}" for i in range(len(lengths))],
             branch_indices=[0] * len(lengths),
-            group_ids=group_ids,
             lora_num_tokens=torch.tensor([token_count], dtype=torch.int32),
             seq_lens=torch.tensor(lengths, dtype=torch.long),
             routed_experts=None,
@@ -166,27 +166,17 @@ def _loss(model, features, batch, config):
     return loss, sequence_losses
 
 
-def _prompt_gradient_reference(optimizer_parameters, batches, config):
+def _rollout_gradient_reference(optimizer_parameters, batches, config):
     reference = _model(reshard_after_forward=None)
     reference.load_state_dict({name: _local(parameter).detach() for name, parameter in optimizer_parameters.items()})
     parameters = dict(reference.named_parameters())
-    accumulated = {}
+    rollout_gradients = []
     for features, batch in batches:
         _, sequence_losses = _loss(reference, features, batch, config)
-        for group_id in dict.fromkeys(batch["group_ids"]):
-            prompt_loss = sum(
-                loss
-                for loss, sequence_group in zip(sequence_losses, batch["group_ids"], strict=True)
-                if sequence_group == group_id
-            )
-            gradients = torch.autograd.grad(prompt_loss, tuple(parameters.values()), retain_graph=True)
-            target = accumulated.setdefault(
-                group_id,
-                {name: torch.zeros_like(p, device="cpu", dtype=torch.float32) for name, p in parameters.items()},
-            )
-            for name, gradient in zip(parameters, gradients, strict=True):
-                target[name].add_(gradient.detach().float().cpu())
-    return accumulated
+        for sequence_loss in sequence_losses:
+            gradients = torch.autograd.grad(sequence_loss, tuple(parameters.values()), retain_graph=True)
+            rollout_gradients.append(torch.cat([gradient.detach().double().cpu().flatten() for gradient in gradients]))
+    return torch.stack(rollout_gradients)
 
 
 @pytest.mark.parametrize("reshard_after_forward", [True, False])
@@ -248,17 +238,18 @@ def test_two_step_capture_matches_training_without_capture(
     captured_optimizer = torch.optim.AdamW(captured_parameters.values(), lr=trainer_config.optim.lr, weight_decay=0.0)
     assert trainer_config.gradient_capture.steps == [1, 2]
     assert trainer_config.max_steps == 3
+    assert trainer_config.ckpt.interval == 2
+    assert trainer_config.ckpt.save_gradients_and_updates is True
+    statistics_steps = []
+    checkpoint_steps = []
     for step in range(1, trainer_config.max_steps + 1):
         batches = _microbatches(step)
         capture = None
         if step in trainer_config.gradient_capture.steps:
-            expected_prompt_gradients = _prompt_gradient_reference(captured_parameters, batches, trainer_config)
-            capture = PromptGradientCapture(
+            expected_rollout_gradients = _rollout_gradient_reference(captured_parameters, batches, trainer_config)
+            capture = RolloutGradientCapture(
                 model=captured,
                 config=trainer_config.gradient_capture,
-                output_dir=trainer_config.output_dir,
-                step=step,
-                normalizers=NORMALIZERS,
                 reshard_after_forward=reshard_after_forward,
             )
         for features, batch in batches:
@@ -277,14 +268,44 @@ def test_two_step_capture_matches_training_without_capture(
             _assert_gradients_equal(_gradient_snapshot(captured_parameters), _gradient_snapshot(baseline_parameters))
 
         if capture is not None:
-            destination = capture.finish_step()
-            _assert_saved_gradients(destination, step, captured_parameters, expected_prompt_gradients, batches)
-        else:
-            capture_root = trainer_config.output_dir / trainer_config.gradient_capture.output_dir
-            assert not (capture_root / f"step_{step}").exists()
+            assert capture.statistics.count == 6
+            actual_sum = torch.cat([capture.statistics.gradient_sum[name].flatten() for name in captured_parameters])
+            torch.testing.assert_close(actual_sum, expected_rollout_gradients.sum(dim=0), rtol=0, atol=0)
+            assert capture.statistics.squared_norm_sum == pytest.approx(
+                expected_rollout_gradients.square().sum().item()
+            )
+            metrics = capture.finish_step()
+            mean = expected_rollout_gradients.mean(dim=0)
+            variance = ((expected_rollout_gradients - mean).square().sum() / 5).item()
+            assert metrics["snr/count"] == 6
+            assert metrics["snr/mean_norm"] == pytest.approx(mean.norm().item(), rel=1e-10)
+            assert metrics["snr/variance"] == pytest.approx(variance, rel=1e-10)
+            assert metrics["snr/value"] == pytest.approx(mean.square().sum().item() / variance, rel=1e-10)
+            assert capture.statistics.gradient_sum == {}
+            assert capture.statistics.squared_norm_sum == 0.0
+            assert capture.statistics.count == 0
+            statistics_steps.append(step)
+
+        checkpoint_capture = None
+        if checkpoint_update_capture_enabled(trainer_config.ckpt, step, step == trainer_config.max_steps):
+            checkpoint_capture = CheckpointUpdateCapture(captured, step)
+        raw_gradients = _gradient_snapshot(captured_parameters)
+        before_update = {
+            name: _local(parameter).detach().cpu().clone() for name, parameter in captured_parameters.items()
+        }
+        raw_norm = sum(gradient.double().square().sum().item() for gradient in raw_gradients.values()) ** 0.5
+        assert raw_norm > 0
+        max_norm = min(0.1, raw_norm / 2)
+        clip_grad_norm_(None, baseline, max_norm)
+        clip_grad_norm_(None, captured, max_norm)
+        clipped_gradients = _gradient_snapshot(captured_parameters)
+        assert any(not torch.equal(raw_gradients[name], clipped_gradients[name]) for name in captured_parameters)
+        _assert_gradients_equal(clipped_gradients, _gradient_snapshot(baseline_parameters))
 
         baseline_optimizer.step()
         captured_optimizer.step()
+        if checkpoint_capture is not None:
+            checkpoint_capture.capture_update()
         for name, parameter in captured_parameters.items():
             baseline_parameter = baseline_parameters[name]
             torch.testing.assert_close(_local(parameter), _local(baseline_parameter), rtol=0, atol=0, msg=name)
@@ -295,37 +316,21 @@ def test_two_step_capture_matches_training_without_capture(
                 torch.testing.assert_close(_local(actual_state[key]), _local(expected_state[key]), rtol=0, atol=0)
         baseline_optimizer.zero_grad(set_to_none=True)
         captured_optimizer.zero_grad(set_to_none=True)
-
-
-def _assert_saved_gradients(destination, step, parameters, expected_prompt_gradients, batches):
-    manifest = json.loads((destination / "manifest.json").read_text())
-    assert manifest["microbatches"] == 2
-    assert manifest["verification"]["checked"] is True
-    assert manifest["verification"]["parameters"].keys() == parameters.keys()
-    for error in manifest["verification"]["parameters"].values():
-        assert error["error_l2"] <= error["tolerance_l2"]
-    assert {group["group_id"] for group in manifest["groups"]} == {"prompt-a", "prompt-b"}
-    assert len(list(destination.glob("prompt_*.pt"))) == 2
-    for group in manifest["groups"]:
-        assert group["sequence_count"] == 3
-        payload = torch.load(destination / group["file"], map_location="cpu", weights_only=True)
-        assert payload["schema_version"] == 1
-        assert payload["step"] == step
-        assert payload["env_name"] == "test-env"
-        assert payload["normalizers"] == NORMALIZERS
-        assert len(payload["sequences"]) == 3
-        expected_traces = {
-            trace_id
-            for _, batch in batches
-            for group_id, trace_id in zip(batch["group_ids"], batch["trace_ids"], strict=True)
-            if group_id == group["group_id"]
-        }
-        assert {sequence["trace_id"] for sequence in payload["sequences"]} == expected_traces
-        assert payload["gradients"].keys() == parameters.keys()
-        for name, gradient in payload["gradients"].items():
-            assert gradient is not None
-            assert gradient.device.type == "cpu" and gradient.dtype == torch.float32
-            assert torch.isfinite(gradient).all() and gradient.abs().sum() > 0
-            assert payload["parameter_metadata"][name]["compute_dtype"] == "torch.bfloat16"
-            assert payload["parameter_metadata"][name]["optimizer_dtype"] == "torch.float32"
-            torch.testing.assert_close(gradient, expected_prompt_gradients[group["group_id"]][name], rtol=0, atol=0)
+        if checkpoint_capture is not None:
+            checkpoint_directory = trainer_config.output_dir / "checkpoints" / f"step_{step}" / "trainer"
+            destination = checkpoint_capture.save(checkpoint_directory)
+            payload = torch.load(destination, map_location="cpu", weights_only=True)
+            assert destination.name == "gradient_update.pt"
+            assert payload["step"] == step
+            assert payload["gradients_before_clipping"] is True
+            assert payload["update_definition"] == "after_minus_before"
+            _assert_gradients_equal(payload["batch_gradients"], raw_gradients)
+            for name, parameter in captured_parameters.items():
+                expected_update = _local(parameter).detach().cpu() - before_update[name]
+                torch.testing.assert_close(payload["applied_updates"][name], expected_update, rtol=0, atol=0)
+                assert payload["parameter_metadata"][name]["parameter_dtype"] == "torch.float32"
+            checkpoint_steps.append(step)
+        assert not list(trainer_config.output_dir.rglob("prompt_*.pt"))
+    assert statistics_steps == [1, 2]
+    assert checkpoint_steps == [2, 3]
+    assert len(list(trainer_config.output_dir.rglob("gradient_update.pt"))) == 2

@@ -1145,14 +1145,13 @@ def test_gradient_capture_loads_from_toml(tmp_path):
         {
             "max_steps": 2,
             "model": {"compile": "None", "ac": "None", "ac_offloading": "None", "ep": 1},
-            "gradient_capture": {"steps": [1, 2], "output_dir": "prompt_gradients", "verify": True},
+            "gradient_capture": {"steps": [1, 2], "verify": True},
         },
     )
     config = cli(TrainerConfig, args=["@", str(config_file)])
 
     assert config.gradient_capture is not None
     assert config.gradient_capture.steps == [1, 2]
-    assert config.gradient_capture.output_dir == Path("prompt_gradients")
     assert config.gradient_capture.verify is True
     assert config.gradient_capture.verify_rtol == 0.05
     assert config.gradient_capture.verify_atol == 1e-6
@@ -1188,10 +1187,11 @@ def test_gradient_capture_rejects_unsupported_model_settings(gradient_capture_tr
         TrainerConfig.model_validate(gradient_capture_trainer_settings)
 
 
-def test_gradient_capture_requires_real_prompt_groups(gradient_capture_trainer_settings):
+def test_rollout_gradient_capture_accepts_fake_data(gradient_capture_trainer_settings):
     gradient_capture_trainer_settings["data"] = {"fake": {}}
-    with pytest.raises(ValidationError, match="data.fake"):
-        TrainerConfig.model_validate(gradient_capture_trainer_settings)
+    config = TrainerConfig.model_validate(gradient_capture_trainer_settings)
+    assert config.data.fake is not None
+    assert config.gradient_capture.steps == [1, 2]
 
 
 @pytest.mark.parametrize("optimization_dtype", ["float32", "bfloat16"])
@@ -1205,7 +1205,6 @@ def test_gradient_capture_preserves_precision_and_state_offload(
     assert config.model.reduce_dtype == reduce_dtype
     assert config.model.optim_cpu_offload is True
     assert config.gradient_capture is not None
-    assert config.gradient_capture.output_dir is None
     assert config.gradient_capture.verify is False
 
 
@@ -1217,3 +1216,38 @@ def test_gradient_capture_rejects_invalid_tolerances(gradient_capture_trainer_se
     gradient_capture_trainer_settings["gradient_capture"][field] = value
     with pytest.raises(ValidationError, match=field):
         TrainerConfig.model_validate(gradient_capture_trainer_settings)
+
+
+def test_checkpoint_gradient_and_update_capture_defaults_off():
+    config = TrainerConfig.model_validate({"ckpt": {}})
+    assert config.ckpt.save_gradients_and_updates is False
+
+
+def test_checkpoint_gradient_and_update_capture_propagates_only_to_trainer():
+    config = RLConfig.model_validate(
+        {
+            "ckpt": {"interval": 2, "save_gradients_and_updates": True},
+            "trainer": {},
+            "orchestrator": {"renderer": {"name": "default"}},
+        }
+    )
+    assert config.trainer.ckpt.save_gradients_and_updates is True
+    assert config.trainer.ckpt.interval == 2
+    assert config.orchestrator.ckpt.interval == 2
+    assert "save_gradients_and_updates" not in type(config.orchestrator.ckpt).model_fields
+
+
+def test_checkpoint_gradient_and_update_capture_rejects_optimizer_in_backward():
+    with pytest.raises(ValidationError, match=r"ckpt.save_gradients_and_updates requires model.full_offload=None"):
+        TrainerConfig.model_validate(
+            {
+                "model": {"optim_cpu_offload": False, "full_offload": True},
+                "optim": {"max_norm": None},
+                "ckpt": {"save_gradients_and_updates": True},
+            }
+        )
+
+
+def test_sft_rejects_checkpoint_gradient_and_update_capture():
+    with pytest.raises(ValidationError, match="supported by the RL trainer only"):
+        SFTConfig.model_validate({"ckpt": {"save_gradients_and_updates": True}})

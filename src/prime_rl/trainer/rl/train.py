@@ -39,7 +39,8 @@ from prime_rl.trainer.rl.loss import (
 from prime_rl.multimodal import get_multimodal_adapter
 from prime_rl.trainer.multimodal import materialize_mm_refs
 from prime_rl.trainer.rl.annotations import AnnotationWriter
-from prime_rl.trainer.rl.gradients import PromptGradientCapture
+from prime_rl.trainer.rl.gradients import RolloutGradientCapture
+from prime_rl.trainer.update_capture import CheckpointUpdateCapture, checkpoint_update_capture_enabled
 from prime_rl.trainer.model import (
     forward,
     get_full_offload_dtype_policy,
@@ -87,6 +88,8 @@ def train(config: TrainerConfig):
     logger.info(f"Starting RL trainer in {world} (output_dir={config.output_dir})")
     if config.gradient_capture is not None and world.world_size != 1:
         raise ValueError("gradient_capture requires exactly one trainer GPU")
+    if config.ckpt and config.ckpt.save_gradients_and_updates and world.world_size != 1:
+        raise ValueError("ckpt.save_gradients_and_updates requires exactly one trainer GPU")
 
     # Setup the monitors
     asyncio.run(
@@ -327,15 +330,12 @@ def train(config: TrainerConfig):
         rl_scale, ce_scale, ref_kl_scale = (scale if scale > 0 else 1 for scale in global_scales.tolist())
         gradient_capture = None
         if config.gradient_capture is not None and progress.step in config.gradient_capture.steps:
-            gradient_capture = PromptGradientCapture(
+            gradient_capture = RolloutGradientCapture(
                 model,
                 config.gradient_capture,
-                config.output_dir,
-                progress.step,
-                {"rl": rl_scale, "ce": ce_scale, "ref_kl": ref_kl_scale},
                 reshard_after_forward=config.model.reshard_after_forward,
             )
-            logger.info(f"Capturing prompt gradients at step {progress.step}")
+            logger.info(f"Computing rollout gradient statistics at step {progress.step}")
         prepare_gradient_offload(
             gradient_manager,
             parallel_dims.fsdp_gradient_divide_factor,
@@ -596,8 +596,14 @@ def train(config: TrainerConfig):
             scale_gradients_(None, model, parallel_dims.fsdp_gradient_divide_factor)
 
         if gradient_capture is not None:
-            capture_directory = gradient_capture.finish_step()
-            logger.info(f"Saved prompt gradients to {capture_directory}")
+            gradient_metrics = gradient_capture.finish_step()
+            asyncio.run(monitors.log(gradient_metrics, step=progress.step))
+            logger.info(f"Rollout gradient statistics at step {progress.step}: {gradient_metrics}")
+            gradient_capture = None
+
+        checkpoint_update = None
+        if checkpoint_update_capture_enabled(config.ckpt, progress.step, is_last_step):
+            checkpoint_update = CheckpointUpdateCapture(model, progress.step)
 
         # Optionally, clip the gradients
         grad_norm: torch.Tensor | None = None
@@ -606,6 +612,8 @@ def train(config: TrainerConfig):
 
         # Update the model parameters
         optimizer.step()
+        if checkpoint_update is not None:
+            checkpoint_update.capture_update()
         optimizer.zero_grad()
 
         # Update learning rate scheduler
@@ -642,6 +650,9 @@ def train(config: TrainerConfig):
             logger.info(f"Saving checkpoint at step {progress.step}")
             save_ckpt_start_time = time.perf_counter()
             ckpt_manager.save(progress.step, model, [optimizer], scheduler, progress)
+            if checkpoint_update is not None:
+                checkpoint_update.save(ckpt_manager.get_ckpt_path(progress.step))
+                checkpoint_update = None
             save_ckpt_time = time.perf_counter() - save_ckpt_start_time
 
             ckpt_manager.maybe_clean()
@@ -754,6 +765,9 @@ def train(config: TrainerConfig):
     if config.ckpt is not None:
         logger.info(f"Saving final checkpoint at step {progress.step}")
         ckpt_manager.save(progress.step, model, [optimizer], scheduler, progress)
+        if checkpoint_update is not None:
+            checkpoint_update.save(ckpt_manager.get_ckpt_path(progress.step))
+            checkpoint_update = None
         ckpt_manager.maybe_clean()
 
     if gradient_manager is not None:

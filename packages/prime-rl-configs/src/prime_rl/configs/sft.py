@@ -366,6 +366,12 @@ class SFTConfig(BaseConfig):
     ### Validate configs (e.g. raise for unsupported (combinations of) configs)
 
     @model_validator(mode="after")
+    def validate_checkpoint_updates(self):
+        if self.ckpt and self.ckpt.save_gradients_and_updates:
+            raise ValueError("ckpt.save_gradients_and_updates is supported by the RL trainer only")
+        return self
+
+    @model_validator(mode="after")
     def deepep_disables_grad_clipping(self):
         if self.model.ep != 1 and self.model.moe.dispatch.type == "deepep" and self.optim.max_norm is not None:
             warnings.warn(
