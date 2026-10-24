@@ -5,7 +5,7 @@ commit from which that run was launched: execution used base `57c22db` plus an
 uncommitted worktree and two source repairs. Do not label historical results with
 this new commit as though it existed at execution time.
 
-The ten-rate grid is `{1, 5} × {1e-7, 1e-6, 1e-5, 1e-4, 1e-3}`, with 200 updates
+The ten-rate grid is `{1, 5} Ã— {1e-7, 1e-6, 1e-5, 1e-4, 1e-3}`, with 200 updates
 per sweep. The 500- and 1,000-update repeats use 1e-6. A separate five-update
 configuration captures and verifies prompt gradients. All configurations use
 LiquidAI/LFM2.5-230M, BF16 compute/inference and unchanged FP32 optimization and
