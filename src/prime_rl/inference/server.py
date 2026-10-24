@@ -23,8 +23,8 @@ def setup_vllm_env(config: InferenceConfig):
         from transformers import AutoConfig
 
         model_config = AutoConfig.from_pretrained(config.vllm.model, trust_remote_code=config.vllm.trust_remote_code)
-        if model_config.model_type != "qwen3":
-            raise ValueError("The ROCm inference profile currently supports dense Qwen3 only.")
+        if model_config.model_type not in {"qwen3", "lfm2"}:
+            raise ValueError("The ROCm inference profile currently supports dense Qwen3 and LFM2 only.")
 
     # spawn is more robust in vLLM nightlies and Qwen3-VL (fork can deadlock with multithreaded processes)
     os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")

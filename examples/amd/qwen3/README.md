@@ -7,21 +7,13 @@ Compilation, parameter fusions, activation/optimizer offload, quantization, LoRA
 and context/expert parallelism are disabled in the supplied configs. The model's
 optimization and reduction dtype defaults remain in effect.
 
-## Validation status
+## Validation scope
 
-Local validation without a GPU:
-
-- Windows CPU: 15 tests passed; 4 GPU tests skipped. This covers imports with
-  optional GPU packages unavailable, Qwen3 registration, GPU visibility logic,
-  and the existing sequence-boundary tests.
-- Ubuntu CPU: 14 config checks passed, including all four model overlays for
-  both SFT and RL.
-- Ruff lint/format checks, Python/TOML syntax checks, Bash syntax checks, and
-  `git diff --check` passed.
-
-The complete ROCm installation, MI355X execution, and NVIDIA GPU regression
-tests remain unverified. The acceptance steps below are required on the target
-runtime; CPU success does not establish kernel correctness or training stability.
+Use the acceptance checks below on the actual ROCm runtime. CPU import and
+configuration checks do not establish kernel correctness or training stability.
+The strict BF16 cross-backend gradient comparison remains an unresolved gate;
+do not relax its tolerances to make a run pass. See
+[the AMD guide](../../../porting_to_amd.md) for the supported scope and diagnostics.
 
 ## Installation
 
@@ -68,16 +60,16 @@ From the repository root, with the ROCm environment activated:
 ```bash
 # Validate example schemas on Linux before allocating GPUs.
 # Includes RL configs: requires reverse-text, installed by the rl setup mode.
-uv run --no-project --active --no-sync pytest -q tests/unit/test_configs.py -k amd
+uv run --no-project --active --no-sync python -m pytest -q tests/unit/test_configs.py -k amd
 
 # CPU-capable boundary checks, followed by real FA2 forward/backward, sequence
 # isolation, and optimizer-state resume checks on the GPU. No checkpoint download.
-uv run --no-project --active --no-sync pytest -q tests/unit/train/models/test_qwen3_portability.py
-uv run --no-project --active --no-sync pytest -q tests/unit/utils/test_gpu_visibility.py
+uv run --no-project --active --no-sync python -m pytest -q tests/unit/train/models/test_qwen3_portability.py
+uv run --no-project --active --no-sync python -m pytest -q tests/unit/utils/test_gpu_visibility.py
 
 # Requires vLLM. Compares prompt logprobs, reloads changed weights, then restores
 # the original policy and verifies the served logprobs again. One GPU.
-uv run --no-project --active --no-sync pytest -q tests/unit/inference/test_qwen3_weight_refresh.py
+uv run --no-project --active --no-sync python -m pytest -q tests/unit/inference/test_qwen3_weight_refresh.py
 ```
 
 Both GPU test files also run on NVIDIA with FA2, providing a regression gate for

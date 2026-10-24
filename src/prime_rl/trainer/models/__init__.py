@@ -6,6 +6,7 @@ from importlib import import_module
 from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 from transformers.models.auto.auto_factory import _BaseAutoModelClass, _LazyAutoMapping, auto_class_update
+from transformers.models.lfm2.configuration_lfm2 import Lfm2Config
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 
@@ -51,6 +52,7 @@ _CUSTOM_CAUSAL_LM_MODELS: tuple[
     tuple[type[PretrainedConfig], str],
     ...,
 ] = (
+    (Lfm2Config, "Lfm2ForCausalLM"),
     (LlamaConfig, "LlamaForCausalLM"),
     (Qwen3Config, "Qwen3ForCausalLM"),
     (AfmoeConfig, "AfmoeForCausalLM"),
@@ -76,6 +78,7 @@ _MODEL_MODULES = {
     "GlmMoeDsaForCausalLM": "glm_moe_dsa",
     "GptOssForCausalLM": "gpt_oss",
     "LagunaForCausalLM": "laguna",
+    "Lfm2ForCausalLM": "lfm2",
     "LlamaForCausalLM": "llama",
     "MiniMaxM2ForCausalLM": "minimax_m2",
     "NemotronHForCausalLM": "nemotron_h",

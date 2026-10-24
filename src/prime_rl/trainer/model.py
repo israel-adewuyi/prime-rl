@@ -360,8 +360,8 @@ def get_model(
         ),
     )
     model_config.use_cache = False
-    if torch.version.hip is not None and model_config.model_type != "qwen3":
-        raise ValueError("The ROCm trainer profile currently supports dense Qwen3 only.")
+    if torch.version.hip is not None and model_config.model_type not in {"qwen3", "lfm2"}:
+        raise ValueError("The ROCm trainer profile supports dense Qwen3 and LFM2 only.")
     is_vlm_arch = is_vlm_architecture(model_config)
 
     if is_vlm_training:
@@ -635,6 +635,7 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
     final_module = (
         getattr(language_model, "norm", None)
         or getattr(language_model, "norm_f", None)
+        or getattr(language_model, "embedding_norm", None)
         or getattr(language_model, "hyper_connection_mixer", None)
     )
 
@@ -965,7 +966,7 @@ def setup_model(
         if config.quantization is not None:
             raise ValueError("The ROCm training path does not support FP8/MXFP8 quantization.")
         if config.cp != 1 or config.ep not in (1, "auto") or config.lora is not None:
-            raise ValueError("The ROCm Qwen3 profile requires cp=1, ep=1/auto, and full-parameter training.")
+            raise ValueError("The ROCm profile requires cp=1, ep=1/auto, and full-parameter training.")
 
     if config.attn == "flash_attention_2":
         from prime_rl.trainer.models.layers.attn import get_flash_attn_func
