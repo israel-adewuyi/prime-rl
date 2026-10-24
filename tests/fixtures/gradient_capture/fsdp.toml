@@ -1,0 +1,24 @@
+max_steps = 3
+matmul_precision = "highest"
+
+[model]
+compile = "None"
+ac = "None"
+ac_offloading = "None"
+optim_cpu_offload = false
+
+[loss]
+type = "ipo"
+eps = 10.0
+
+[optim]
+type = "adamw"
+lr = 0.001
+weight_decay = 0.0
+
+[gradient_capture]
+steps = [1, 2]
+output_dir = "captured"
+verify = true
+verify_rtol = 0.05
+verify_atol = 0.000001

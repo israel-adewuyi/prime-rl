@@ -613,12 +613,38 @@ class DataLoaderConfig(BaseConfig):
     """Use a fake data loader sampling random micro-batches (for debugging)."""
 
 
+class GradientCaptureConfig(BaseConfig):
+    steps: list[Annotated[int, Field(ge=1)]] = Field(min_length=1)
+    """Trainer update numbers at which to save every prompt's gradient before clipping."""
+
+    output_dir: Path | None = None
+    """Capture directory, relative to the trainer output directory unless absolute. Defaults to prompt_gradients."""
+
+    verify: bool = False
+    """Check that capture preserves accumulated optimizer gradients and reconstructs the batch gradient."""
+
+    verify_rtol: float = Field(0.05, gt=0, allow_inf_nan=False)
+    """Relative tolerance for gradient reconstruction under mixed precision."""
+
+    verify_atol: float = Field(1e-6, ge=0, allow_inf_nan=False)
+    """Absolute tolerance for gradient reconstruction."""
+
+    @model_validator(mode="after")
+    def validate_steps(self):
+        if len(set(self.steps)) != len(self.steps):
+            raise ValueError("gradient_capture.steps must be unique")
+        return self
+
+
 class TrainerConfig(BaseConfig):
     model: ModelConfig = ModelConfig()
 
     tokenizer: TokenizerConfig = TokenizerConfig()
 
     data: DataLoaderConfig = DataLoaderConfig()
+
+    gradient_capture: GradientCaptureConfig | None = None
+    """Save full, batch-normalized prompt gradients on selected updates; single-GPU eager training only."""
 
     loss: LossConfig = IPOLossConfig()
     """Loss config for the rl loss component (see ``setup_rl_loss_fn``). The ce / ref_kl components are fixed and do not read this."""
@@ -673,6 +699,23 @@ class TrainerConfig(BaseConfig):
 
     env_vars: EnvVars = {}
     """Extra environment variables for the trainer process(es). Merged on top of the launcher defaults."""
+
+    @model_validator(mode="after")
+    def validate_gradient_capture(self):
+        if self.gradient_capture is None:
+            return self
+        if self.model.cp != 1 or self.model.ep not in (1, "auto") or self.model.dp_replicate != 1:
+            raise ValueError("gradient_capture requires one trainer GPU with cp=1, ep=1, dp_replicate=1")
+        for name in ("compile", "ac", "ac_offloading", "full_offload", "quantization", "vlm"):
+            if getattr(self.model, name) is not None:
+                raise ValueError(f"gradient_capture requires model.{name}=None")
+        if self.model.fsdp_cpu_offload:
+            raise ValueError("gradient_capture requires model.fsdp_cpu_offload=false")
+        if self.data.fake is not None:
+            raise ValueError("gradient_capture requires real prompt-group IDs; data.fake is unsupported")
+        if self.max_steps is not None and max(self.gradient_capture.steps) > self.max_steps:
+            raise ValueError("gradient_capture.steps must not exceed max_steps")
+        return self
 
     @model_validator(mode="after")
     def resolve_moe_router_dtype_auto(self):

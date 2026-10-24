@@ -387,6 +387,7 @@ def compute_loss(
     rl_scale: float,
     ce_scale: float,
     ref_kl_scale: float,
+    per_sequence_losses: list[Tensor] | None = None,
 ) -> tuple[Float[Tensor, ""], dict[str, Any]]:
     """
     Compute loss for packed sequences (batch size = 1, multiple sequences packed along sequence dimension).
@@ -419,6 +420,8 @@ def compute_loss(
         rl_scale: Global sum of rl weights normalizing the rl component
         ce_scale: Global ce-token count normalizing the ce component
         ref_kl_scale: Global ref_kl-token count normalizing the ref_kl component
+        per_sequence_losses: Optional output list receiving each sequence's differentiable total,
+            using the same global denominators as scaled_loss
 
     Returns:
         Tuple of (scaled_loss, aggregated_metrics)
@@ -458,6 +461,9 @@ def compute_loss(
         ce_weights,
         ref_kl_weights,
     ):
+        seq_rl_loss = 0.0
+        seq_ce_loss = 0.0
+        seq_ref_kl_loss = 0.0
 
         def make_inputs(component_mask: Bool[Tensor, " seq"], weights: Float[Tensor, " seq"] | None) -> LossInputs:
             return LossInputs(
@@ -470,19 +476,29 @@ def compute_loss(
             )
 
         if rl_w is None:
-            rl_loss = rl_loss + run_loss_fn(rl_loss_fn.loss, make_inputs(mask, None))
+            seq_rl_loss = run_loss_fn(rl_loss_fn.loss, make_inputs(mask, None))
+            rl_loss = rl_loss + seq_rl_loss
         else:
             rl_mask = mask & (rl_w != 0)
             if bool(rl_mask.any()):
-                rl_loss = rl_loss + run_loss_fn(rl_loss_fn.loss, make_inputs(rl_mask, rl_w))
+                seq_rl_loss = run_loss_fn(rl_loss_fn.loss, make_inputs(rl_mask, rl_w))
+                rl_loss = rl_loss + seq_rl_loss
         if ce_w is not None:
             ce_mask = ce_w != 0
             if bool(ce_mask.any()):
-                ce_loss = ce_loss + run_loss_fn(ce_loss_fn, make_inputs(ce_mask, ce_w))
+                seq_ce_loss = run_loss_fn(ce_loss_fn, make_inputs(ce_mask, ce_w))
+                ce_loss = ce_loss + seq_ce_loss
         if ref_kl_w is not None:
             ref_kl_mask = ref_kl_w != 0
             if bool(ref_kl_mask.any()):
-                ref_kl_loss = ref_kl_loss + run_loss_fn(ref_kl_loss_fn, make_inputs(ref_kl_mask, ref_kl_w))
+                seq_ref_kl_loss = run_loss_fn(ref_kl_loss_fn, make_inputs(ref_kl_mask, ref_kl_w))
+                ref_kl_loss = ref_kl_loss + seq_ref_kl_loss
+
+        if per_sequence_losses is not None:
+            sequence_loss = seq_rl_loss / rl_scale + seq_ce_loss / ce_scale + seq_ref_kl_loss / ref_kl_scale
+            if not isinstance(sequence_loss, Tensor):
+                sequence_loss = t_logp.sum() * 0.0
+            per_sequence_losses.append(sequence_loss)
 
     scaled_loss = rl_loss / rl_scale + ce_loss / ce_scale + ref_kl_loss / ref_kl_scale
 

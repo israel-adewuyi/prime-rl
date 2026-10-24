@@ -1117,3 +1117,103 @@ def test_custom_renderer_rejects_unknown_fields(tmp_path, custom_renderer_import
 
     with pytest.raises(ConfigFileError, match="depth"):
         cli(SFTConfig, args=["@", str(config_file)])
+
+
+def test_gradient_capture_is_disabled_by_default():
+    config = TrainerConfig()
+    assert config.gradient_capture is None
+    assert config.model.compile is not None
+    assert config.model.ac is not None
+    assert config.model.ac_offloading is not None
+    assert config.model.optimization_dtype == "float32"
+    assert config.model.reduce_dtype == "float32"
+
+
+@pytest.fixture
+def gradient_capture_trainer_settings():
+    return {
+        "model": {"compile": None, "ac": None, "ac_offloading": None},
+        "gradient_capture": {"steps": [1, 2]},
+        "max_steps": 2,
+    }
+
+
+def test_gradient_capture_loads_from_toml(tmp_path):
+    config_file = tmp_path / "capture.toml"
+    write_toml(
+        config_file,
+        {
+            "max_steps": 2,
+            "model": {"compile": "None", "ac": "None", "ac_offloading": "None", "ep": 1},
+            "gradient_capture": {"steps": [1, 2], "output_dir": "prompt_gradients", "verify": True},
+        },
+    )
+    config = cli(TrainerConfig, args=["@", str(config_file)])
+
+    assert config.gradient_capture is not None
+    assert config.gradient_capture.steps == [1, 2]
+    assert config.gradient_capture.output_dir == Path("prompt_gradients")
+    assert config.gradient_capture.verify is True
+    assert config.gradient_capture.verify_rtol == 0.05
+    assert config.gradient_capture.verify_atol == 1e-6
+    assert config.model.compile is config.model.ac is config.model.ac_offloading is None
+    assert config.model.optimization_dtype == config.model.reduce_dtype == "float32"
+
+
+@pytest.mark.parametrize("steps", [[], [0], [-1], [1, 1], [1, 3]])
+def test_gradient_capture_rejects_invalid_steps(gradient_capture_trainer_settings, steps):
+    gradient_capture_trainer_settings["gradient_capture"]["steps"] = steps
+    with pytest.raises(ValidationError, match="gradient_capture"):
+        TrainerConfig.model_validate(gradient_capture_trainer_settings)
+
+
+@pytest.mark.parametrize(
+    "model_override",
+    [
+        {"cp": 2},
+        {"ep": 2},
+        {"dp_replicate": 2},
+        {"compile": {}},
+        {"ac": {}},
+        {"ac_offloading": {}},
+        {"full_offload": True, "optim_cpu_offload": False},
+        {"fsdp_cpu_offload": True, "optim_cpu_offload": False},
+        {"quantization": {"type": "mxfp8"}},
+        {"vlm": {"vision_encoder_attr": "model.visual", "language_model_attr": "model.language_model"}},
+    ],
+)
+def test_gradient_capture_rejects_unsupported_model_settings(gradient_capture_trainer_settings, model_override):
+    gradient_capture_trainer_settings["model"].update(model_override)
+    with pytest.raises(ValidationError, match="gradient_capture"):
+        TrainerConfig.model_validate(gradient_capture_trainer_settings)
+
+
+def test_gradient_capture_requires_real_prompt_groups(gradient_capture_trainer_settings):
+    gradient_capture_trainer_settings["data"] = {"fake": {}}
+    with pytest.raises(ValidationError, match="data.fake"):
+        TrainerConfig.model_validate(gradient_capture_trainer_settings)
+
+
+@pytest.mark.parametrize("optimization_dtype", ["float32", "bfloat16"])
+@pytest.mark.parametrize("reduce_dtype", ["float32", "bfloat16"])
+def test_gradient_capture_preserves_precision_and_state_offload(
+    gradient_capture_trainer_settings, optimization_dtype, reduce_dtype
+):
+    gradient_capture_trainer_settings["model"].update(optimization_dtype=optimization_dtype, reduce_dtype=reduce_dtype)
+    config = TrainerConfig.model_validate(gradient_capture_trainer_settings)
+    assert config.model.optimization_dtype == optimization_dtype
+    assert config.model.reduce_dtype == reduce_dtype
+    assert config.model.optim_cpu_offload is True
+    assert config.gradient_capture is not None
+    assert config.gradient_capture.output_dir is None
+    assert config.gradient_capture.verify is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("verify_rtol", 0.0), ("verify_rtol", float("inf")), ("verify_atol", -1.0), ("verify_atol", float("nan"))],
+)
+def test_gradient_capture_rejects_invalid_tolerances(gradient_capture_trainer_settings, field, value):
+    gradient_capture_trainer_settings["gradient_capture"][field] = value
+    with pytest.raises(ValidationError, match=field):
+        TrainerConfig.model_validate(gradient_capture_trainer_settings)

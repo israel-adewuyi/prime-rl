@@ -471,6 +471,122 @@ def test_overlapping_components_sum():
     assert torch.isclose(both, rl_only + ce_only, atol=1e-6)
 
 
+@pytest.mark.parametrize(
+    "loss_config",
+    [
+        IPOLossConfig(),
+        IcePopLossConfig(),
+        PPOLossConfig(),
+        CISPOLossConfig(),
+        CustomLossConfig(
+            import_path="tests.unit.train.rl.test_loss._dummy_custom_loss",
+            kwargs={"multiplier": 2.0},
+        ),
+    ],
+)
+def test_per_sequence_losses_reconstruct_total_and_gradients(loss_config):
+    trainer_logprobs = [
+        torch.tensor(values, device="cuda", requires_grad=True)
+        for values in ([-1.2, -0.8, -2.0, -1.0], [-0.5, -1.5, -2.5], [-1.0, -2.0])
+    ]
+    kwargs = dict(
+        trainer_logprobs=trainer_logprobs,
+        inference_logprobs=[values.detach() - 0.05 for values in trainer_logprobs],
+        ref_logprobs=[values.detach() + 0.1 for values in trainer_logprobs],
+        advantages=[torch.ones_like(values) for values in trainer_logprobs],
+        loss_mask=[
+            torch.tensor(values, device="cuda")
+            for values in ([True, False, True, True], [True, True, True], [False, False])
+        ],
+        rl_weights=[
+            torch.tensor(values, device="cuda") for values in ([1.0, 0.0, 0.5, 0.0], [0.0, 1.0, 2.0], [0.0, 0.0])
+        ],
+        ce_weights=[
+            torch.tensor(values, device="cuda") for values in ([0.0, 0.25, 1.0, 0.0], [0.5, 0.0, 0.5], [0.0, 0.0])
+        ],
+        ref_kl_weights=[
+            torch.tensor(values, device="cuda") for values in ([0.5, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0])
+        ],
+        rl_loss_fn=setup_rl_loss_fn(loss_config),
+        rl_scale=17,
+        ce_scale=13,
+        ref_kl_scale=11,
+    )
+    baseline_loss, baseline_metrics = compute_loss(**kwargs)
+    per_sequence_losses = []
+    loss, metrics = compute_loss(**kwargs, per_sequence_losses=per_sequence_losses)
+
+    torch.testing.assert_close(loss, baseline_loss, rtol=0, atol=0)
+    assert metrics.keys() == baseline_metrics.keys()
+    for key in metrics:
+        torch.testing.assert_close(metrics[key], baseline_metrics[key], rtol=0, atol=0)
+    assert len(per_sequence_losses) == len(trainer_logprobs)
+    torch.testing.assert_close(sum(per_sequence_losses), loss)
+
+    batch_grads = torch.autograd.grad(loss, trainer_logprobs, retain_graph=True, allow_unused=True)
+    for sequence_loss, logprobs, batch_grad in zip(per_sequence_losses, trainer_logprobs, batch_grads, strict=True):
+        sequence_grad = torch.autograd.grad(sequence_loss, logprobs, retain_graph=True)[0]
+        expected = batch_grad if batch_grad is not None else torch.zeros_like(logprobs)
+        torch.testing.assert_close(sequence_grad, expected)
+        assert logprobs.grad is None
+
+    reconstructed_grads = torch.autograd.grad(sum(per_sequence_losses), trainer_logprobs, retain_graph=True)
+    loss.backward()
+    for reconstructed_grad, logprobs in zip(reconstructed_grads, trainer_logprobs, strict=True):
+        expected = logprobs.grad if logprobs.grad is not None else torch.zeros_like(logprobs)
+        torch.testing.assert_close(reconstructed_grad, expected)
+    assert per_sequence_losses[-1].item() == 0.0
+
+
+@pytest.mark.parametrize("explicit_weights", [False, True])
+def test_per_sequence_losses_preserve_full_batch_normalization_across_microbatches(explicit_weights):
+    parameter = torch.tensor([-1.2, -0.8, -2.0], device="cuda", requires_grad=True)
+    trainer_logprobs = [parameter * multiplier for multiplier in (1.0, 0.8, 1.1, 0.9)]
+    inputs = dict(
+        trainer_logprobs=trainer_logprobs,
+        inference_logprobs=[values.detach() for values in trainer_logprobs],
+        advantages=[torch.full_like(parameter, advantage) for advantage in (1.0, -1.0, 0.5, -0.5)],
+        loss_mask=[torch.ones_like(parameter, dtype=torch.bool) for _ in trainer_logprobs],
+    )
+    kwargs = dict(
+        ref_logprobs=None,
+        ce_weights=None,
+        ref_kl_weights=None,
+        rl_loss_fn=setup_rl_loss_fn(PPOLossConfig()),
+        rl_scale=12,
+        ce_scale=1,
+        ref_kl_scale=1,
+    )
+    weights = [torch.ones_like(parameter) for _ in trainer_logprobs]
+    full_losses = []
+    full_loss, _ = compute_loss(
+        **inputs,
+        **kwargs,
+        rl_weights=weights if explicit_weights else None,
+        per_sequence_losses=full_losses,
+    )
+    expected_prompt_grads = [
+        torch.autograd.grad(full_losses[prompt] + full_losses[prompt + 2], parameter, retain_graph=True)[0]
+        for prompt in range(2)
+    ]
+    accumulated_prompt_grads = [torch.zeros_like(parameter) for _ in range(2)]
+    for start in (0, 2):
+        microbatch_losses = []
+        compute_loss(
+            **{name: values[start : start + 2] for name, values in inputs.items()},
+            **kwargs,
+            rl_weights=weights[start : start + 2] if explicit_weights else None,
+            per_sequence_losses=microbatch_losses,
+        )
+        for prompt, sequence_loss in enumerate(microbatch_losses):
+            accumulated_prompt_grads[prompt] += torch.autograd.grad(sequence_loss, parameter, retain_graph=True)[0]
+
+    for actual, expected in zip(accumulated_prompt_grads, expected_prompt_grads, strict=True):
+        torch.testing.assert_close(actual, expected)
+    full_loss.backward()
+    torch.testing.assert_close(sum(accumulated_prompt_grads), parameter.grad)
+
+
 def _dummy_custom_loss(inputs: LossInputs, multiplier: float = 1.0) -> LossOutputs:
     """A simple custom loss for testing."""
     loss = (inputs.trainer_logprobs[inputs.loss_mask].sum() * multiplier).abs()

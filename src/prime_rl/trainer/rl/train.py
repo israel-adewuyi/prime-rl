@@ -39,6 +39,7 @@ from prime_rl.trainer.rl.loss import (
 from prime_rl.multimodal import get_multimodal_adapter
 from prime_rl.trainer.multimodal import materialize_mm_refs
 from prime_rl.trainer.rl.annotations import AnnotationWriter
+from prime_rl.trainer.rl.gradients import PromptGradientCapture
 from prime_rl.trainer.model import (
     forward,
     get_full_offload_dtype_policy,
@@ -84,6 +85,8 @@ def train(config: TrainerConfig):
         json_logging=config.log.json_logging,
     )
     logger.info(f"Starting RL trainer in {world} (output_dir={config.output_dir})")
+    if config.gradient_capture is not None and world.world_size != 1:
+        raise ValueError("gradient_capture requires exactly one trainer GPU")
 
     # Setup the monitors
     asyncio.run(
@@ -322,6 +325,17 @@ def train(config: TrainerConfig):
         dp_cp_group = parallel_dims.get_mesh("dp_cp").get_group()
         dist.all_reduce(global_scales, op=dist.ReduceOp.SUM, group=dp_cp_group)
         rl_scale, ce_scale, ref_kl_scale = (scale if scale > 0 else 1 for scale in global_scales.tolist())
+        gradient_capture = None
+        if config.gradient_capture is not None and progress.step in config.gradient_capture.steps:
+            gradient_capture = PromptGradientCapture(
+                model,
+                config.gradient_capture,
+                config.output_dir,
+                progress.step,
+                {"rl": rl_scale, "ce": ce_scale, "ref_kl": ref_kl_scale},
+                reshard_after_forward=config.model.reshard_after_forward,
+            )
+            logger.info(f"Capturing prompt gradients at step {progress.step}")
         prepare_gradient_offload(
             gradient_manager,
             parallel_dims.fsdp_gradient_divide_factor,
@@ -337,6 +351,8 @@ def train(config: TrainerConfig):
 
         step_tokens_per_expert = 0
         for micro_step, micro_batch in enumerate(micro_batches):
+            if gradient_capture is not None:
+                gradient_capture.before_forward()
             input_ids = micro_batch["input_ids"].to("cuda")
             position_ids = micro_batch["position_ids"].to("cuda")
             advantages = micro_batch["advantages"].to("cuda")
@@ -484,6 +500,7 @@ def train(config: TrainerConfig):
 
             # Compute loss
             sequence_lengths = micro_batch["sequence_lengths"]
+            per_sequence_losses = [] if gradient_capture is not None else None
             loss, loss_tensors = compute_loss(
                 trainer_logprobs=out["logprobs"].squeeze().split(sequence_lengths),
                 inference_logprobs=inference_logprobs.squeeze().split(sequence_lengths),
@@ -497,7 +514,12 @@ def train(config: TrainerConfig):
                 rl_scale=rl_scale,
                 ce_scale=ce_scale,
                 ref_kl_scale=ref_kl_scale,
+                per_sequence_losses=per_sequence_losses,
             )
+
+            if gradient_capture is not None:
+                gradient_capture.capture_microbatch(loss, per_sequence_losses, micro_batch)
+                del per_sequence_losses
 
             # Backward pass
             with maybe_record_function("backward"):
@@ -572,6 +594,10 @@ def train(config: TrainerConfig):
         # across dp_cp so the final gradient is the true per-token mean over the global batch.
         if gradient_manager is None:
             scale_gradients_(None, model, parallel_dims.fsdp_gradient_divide_factor)
+
+        if gradient_capture is not None:
+            capture_directory = gradient_capture.finish_step()
+            logger.info(f"Saved prompt gradients to {capture_directory}")
 
         # Optionally, clip the gradients
         grad_norm: torch.Tensor | None = None

@@ -259,6 +259,7 @@ class TrainSink:
         for trace in survivors:
             samples = await asyncio.to_thread(trace_to_samples, trace, env_name=env_name)
             for sample in samples:
+                sample.group_id = group_id
                 sample.temperatures = [temperature] * len(sample.token_ids)
                 if env.requires_sampling_masks and sample.sampling_mask is None:
                     # Rollout logprobs are mask-renormalized; training without the masks
