@@ -1,0 +1,172 @@
+{
+  "recorded_after_execution": true,
+  "executed_base_commit": "57c22db7447a32b214492c19f4353b9f3749fa5c",
+  "executed_source_state": "uncommitted local worktree plus the recorded LFM admission and reward TaskData fixes",
+  "model": "LiquidAI/LFM2.5-230M",
+  "observed_model_snapshot": "40cb2ad3b3044d5a41eee083a6103c8b523afa45",
+  "runs": [
+    {
+      "name": "lfm-lr-1e-07-200",
+      "lr": 1e-07,
+      "steps": 200,
+      "pair": 0,
+      "slot": 0,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-5e-07-200",
+      "lr": 5e-07,
+      "steps": 200,
+      "pair": 1,
+      "slot": 1,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-1e-06-200",
+      "lr": 1e-06,
+      "steps": 200,
+      "pair": 0,
+      "slot": 2,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-5e-06-200",
+      "lr": 4.9999999999999996e-06,
+      "steps": 200,
+      "pair": 1,
+      "slot": 3,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-1e-05-200",
+      "lr": 1e-05,
+      "steps": 200,
+      "pair": 0,
+      "slot": 4,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-5e-05-200",
+      "lr": 5e-05,
+      "steps": 200,
+      "pair": 1,
+      "slot": 5,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-1e-04-200",
+      "lr": 0.0001,
+      "steps": 200,
+      "pair": 0,
+      "slot": 6,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-5e-04-200",
+      "lr": 0.0005,
+      "steps": 200,
+      "pair": 1,
+      "slot": 7,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-1e-03-200",
+      "lr": 0.001,
+      "steps": 200,
+      "pair": 0,
+      "slot": 8,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-5e-03-200",
+      "lr": 0.005,
+      "steps": 200,
+      "pair": 1,
+      "slot": 9,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-1e-06-500",
+      "lr": 1e-06,
+      "steps": 500,
+      "pair": 0,
+      "slot": 10,
+      "capture": false
+    },
+    {
+      "name": "lfm-lr-1e-06-1000",
+      "lr": 1e-06,
+      "steps": 1000,
+      "pair": 1,
+      "slot": 11,
+      "capture": false
+    },
+    {
+      "name": "lfm-gradient-capture-5",
+      "lr": 1e-06,
+      "steps": 5,
+      "pair": 2,
+      "slot": 12,
+      "capture": true
+    }
+  ],
+  "configs": [
+    {
+      "file": "configs/lfm-gradient-capture-5.toml",
+      "executed_file_sha256": "bc3042307a032e44b7c9e93e658e32eb591b7a62a35b394237e2a250f21a8bed"
+    },
+    {
+      "file": "configs/lfm-lr-1e-03-200.toml",
+      "executed_file_sha256": "3ced0e396a5ccdc81c1ab91c698b590c4d68457800aebcaa06ac80df9c87c4d4"
+    },
+    {
+      "file": "configs/lfm-lr-1e-04-200.toml",
+      "executed_file_sha256": "568861f40e46fb42edb57cdff6d7bc33fd4c1fcd408ec2dcc950b902db652642"
+    },
+    {
+      "file": "configs/lfm-lr-1e-05-200.toml",
+      "executed_file_sha256": "84d085cc1b2ac62742b513602dc870711354931f8ae447b889fdfcc3847c051b"
+    },
+    {
+      "file": "configs/lfm-lr-1e-06-1000.toml",
+      "executed_file_sha256": "8c2107da7514e49fc9a09f24d23a69db1749421448ce502da3c9d80874088629"
+    },
+    {
+      "file": "configs/lfm-lr-1e-06-200.toml",
+      "executed_file_sha256": "735f20273f200b7661f68af37fbf421e181ca9e72f6b5e06557db9661b1be471"
+    },
+    {
+      "file": "configs/lfm-lr-1e-06-500.toml",
+      "executed_file_sha256": "78ee2e2f1a5b7743c5aa5d6c380cdfa48d2ef23023ca6a66598ae8532f0a9f60"
+    },
+    {
+      "file": "configs/lfm-lr-1e-07-200.toml",
+      "executed_file_sha256": "369dd66a2cf6f206c37cd4295e5d789cf67383f89f6e79f418bbc1ddf9b4ef98"
+    },
+    {
+      "file": "configs/lfm-lr-5e-03-200.toml",
+      "executed_file_sha256": "e53fb6ceeede1ea64828d7505f64e50188d2160c2b8782e2bd4e6a165ff8469f"
+    },
+    {
+      "file": "configs/lfm-lr-5e-04-200.toml",
+      "executed_file_sha256": "73ca91816379073ee4afc92c3740f2438748c481bd82177f7e5fa211e4ffdcf7"
+    },
+    {
+      "file": "configs/lfm-lr-5e-05-200.toml",
+      "executed_file_sha256": "a96d569ebdf94ba11f265927e2d582cc366f980edd5b9deadf07444476f12a06"
+    },
+    {
+      "file": "configs/lfm-lr-5e-06-200.toml",
+      "executed_file_sha256": "27f7f685ecb57ec00010cf974e9808e3e3617a8a0e6591ec4663fcd460ebb473"
+    },
+    {
+      "file": "configs/lfm-lr-5e-07-200.toml",
+      "executed_file_sha256": "218b2d4e0af7fdb58987185cffee011bc5eb54930c8f47a20bae86e89f4a65c0"
+    }
+  ],
+  "portability_edits": [
+    "Output root changed to outputs/exp2-20261023",
+    "Training and evaluation reward helpers moved into this experiment directory"
+  ],
+  "external_evidence": "research_manager/research_outcomes/exp2-20261023/ beside this repository"
+}

@@ -1,0 +1,90 @@
+max_steps = 200
+seq_len = 256
+output_dir = "outputs/exp2-20261023"
+[run]
+name = "lfm-lr-1e-07-200"
+[model]
+name = "LiquidAI/LFM2.5-230M"
+[weight_broadcast]
+type = "filesystem"
+[trainer]
+matmul_precision = "highest"
+[trainer.model]
+attn = "flash_attention_2"
+compile = "None"
+ac = "None"
+ac_offloading = "None"
+optim_cpu_offload = false
+cp = 1
+ep = 1
+fused_lm_head_token_chunk_size = 64
+[trainer.model.fusions]
+enabled = []
+[trainer.optim]
+type = "adamw"
+lr = 1e-07
+
+[orchestrator]
+batch_size = 8
+[orchestrator.concurrency]
+initial_inflight = 16
+min_inflight = 8
+max_inflight = 32
+[orchestrator.renderer]
+name = "default"
+[orchestrator.train]
+group_size = 4
+[orchestrator.train.algo]
+type = "grpo"
+[orchestrator.train.select]
+exclude.idx = ["0:32"]
+[orchestrator.train.sampling]
+temperature = 0.8
+max_completion_tokens = 64
+[[orchestrator.train.source]]
+name = "reverse-text"
+env.taskset.id = "reverse-text"
+env.taskset.task.rewards.lcs.fn = "experiments/lfm-lr-sweep-20261023/rewards.py:raw_reversal_score"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+
+[orchestrator.eval]
+interval = 50
+skip_first_step = false
+group_size = 1
+[orchestrator.eval.select]
+include.idx = ["0:32"]
+[orchestrator.eval.sampling]
+temperature = 0.0
+max_completion_tokens = 64
+[[orchestrator.eval.source]]
+name = "reverse-text-heldout-exact"
+env.taskset.id = "reverse-text"
+env.taskset.task.rewards.lcs.fn = "experiments/lfm-lr-sweep-20261023/rewards.py:exact_reversal_score"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+
+[inference]
+backend_port = 4001
+[inference.server]
+port = 4000
+[inference.vllm]
+seed = 42
+enforce_eager = true
+dtype = "bfloat16"
+tensor_parallel_size = 1
+max_model_len = 256
+max_num_seqs = 16
+gpu_memory_utilization = 0.04
+kv_cache_memory_bytes = 1073741824
+enable_prefix_caching = false
+data_parallel_rpc_port = 27000
+[orchestrator.model.client]
+base_url = "http://localhost:4000/v1"
+admin_base_url = ["http://localhost:4001/v1"]
+[rollout_transport]
+port = 26000
+[monitors.file]
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
