@@ -131,7 +131,7 @@ class FakeDataset(StatefulIterableDataset):
                 continue
 
             seq_len, random_input_ids = self._draw_sample(generator)
-            input_ids = [self.step - 1] * (seq_len + 1) if random_input_ids is None else random_input_ids
+            input_ids = [self.step - 1] * (seq_len + 1) if random_input_ids is None else random_input_ids[: seq_len + 1]
             position_ids = list(range(seq_len))
             loss_mask = [True] * seq_len
             fake_sample = {

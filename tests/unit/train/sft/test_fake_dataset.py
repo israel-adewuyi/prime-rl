@@ -40,7 +40,11 @@ def test_fake_dataset_random_resume(length: str, data_world_size: int):
         dataset = make(data_rank)
         dataiter = iter(dataset)
         for _ in range(3):
-            next(dataiter)
+            sample = next(dataiter)
+            seq_len = sum(sample["seq_lens"])
+            for field in ("input_ids", "target_ids", "position_ids", "loss_mask"):
+                assert len(sample[field]) == seq_len, field
+            assert sample["input_ids"][1:] == sample["target_ids"][:-1]
 
         state_dict = dataset.state_dict()
         expected = [next(dataiter)["input_ids"] for _ in range(2)]
