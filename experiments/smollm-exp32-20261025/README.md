@@ -14,8 +14,9 @@ model execution. The accompanying narrow repair admits PrimeRL's existing
 Llama implementation; it does not establish numerical equivalence with HF.
 
 Both training and evaluation cap completion length at128 tokens. The per-episode
-context limit is512. Trainer packing defaults to16,384 and can be overridden
-for timing probes or capture. Group size16 means16/32 admitted prompt groups
+inference context limit is512. Packing defaults to16,384 and can be overridden
+for timing probes or capture. `--pack` sets both the orchestrator's actual packing
+length and the trainer's accepted length. Group size16 means16/32 admitted prompt groups
 per batch256/512; discarded/no-signal groups can increase sampled prompts.
 BF16 computation/inference and FP32 optimization/reduction defaults are unchanged.
 The built-in reverse-text task and reward are unchanged.

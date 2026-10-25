@@ -30,7 +30,7 @@ max_importance_ratio = 10000.0
 adv_tau = 1.0
 [orchestrator]
 batch_size = 256
-seq_len = 512
+seq_len = 16384
 [orchestrator.concurrency]
 initial_inflight = 128
 min_inflight = 32

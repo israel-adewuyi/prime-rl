@@ -54,7 +54,7 @@ def main():
     cmd = ['uv','--no-config','run','--no-project','--active','rl','@',str(Path(__file__).with_name('base.toml')),
            '--model.name',model_path,'--run.name',name,'--output-dir',str(args.output_dir.resolve()),
            '--max-steps',str(steps),'--trainer.optim.lr',lr,'--orchestrator.batch-size',str(batch),
-           '--trainer.model.seq-len',str(args.pack),
+           '--trainer.model.seq-len',str(args.pack),'--orchestrator.seq-len',str(args.pack),
            '--inference.server.port',str(port),'--inference.backend-port',str(port+1),
            '--inference.vllm.data-parallel-rpc-port',str(26000+slot*100),
            '--orchestrator.model.client.base-url',f'http://127.0.0.1:{port}/v1',
