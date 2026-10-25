@@ -55,6 +55,8 @@ learning curves, memory/activity samples and completed update counts.
 
 The additional concurrency controls use `--requests-per-engine 128`, `256`, or
 `512` to set both vLLM sequence capacity and fixed orchestrator in-flight episodes.
+All these controls use the same 8 GiB KV cache, sufficient for 512 full-length
+contexts, so the original 1 GiB cache does not cap the request comparison.
 The base sweep retains its adaptive 128 initial / 256 maximum in-flight setting.
 Compare 1/2/4 independent runs per inference/trainer pair at 128 requests, then
 128/256/512 requests at one run per pair. Each control starts from the same model,

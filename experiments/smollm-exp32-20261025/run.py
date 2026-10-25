@@ -68,6 +68,7 @@ def main():
     if args.requests_per_engine is not None:
         limit = str(args.requests_per_engine)
         cmd += ['--inference.vllm.max-num-seqs', limit,
+                '--inference.vllm.kv-cache-memory-bytes', str(8 * 1024**3),
                 '--orchestrator.concurrency.initial-inflight', limit,
                 '--orchestrator.concurrency.min-inflight', limit,
                 '--orchestrator.concurrency.max-inflight', limit]
@@ -75,7 +76,8 @@ def main():
         cmd += ['--dry-run']
     record = dict(commit=commit,model=MODEL,model_revision=REVISION,index=args.index,name=name,
                   lr=lr,batch_size=batch,steps=steps,capture=capture,pack=args.pack,gpus=args.gpus,slot=slot,
-                  requests_per_engine=args.requests_per_engine,command=cmd)
+                  requests_per_engine=args.requests_per_engine,
+                  kv_cache_gib=8 if args.requests_per_engine is not None else 1,command=cmd)
     print(json.dumps(record),flush=True)
     print(shlex.join(cmd),flush=True)
     env = dict(os.environ,HIP_VISIBLE_DEVICES=args.gpus,CUDA_VISIBLE_DEVICES=args.gpus)
