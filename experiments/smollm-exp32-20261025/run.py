@@ -22,6 +22,8 @@ def main():
     p.add_argument('--steps', type=int)
     p.add_argument('--batch-size', type=int)
     p.add_argument('--pack', type=int, default=16384)
+    p.add_argument('--requests-per-engine', type=int, choices=(128, 256, 512),
+                   help='Set vLLM sequence capacity and fixed orchestrator in-flight episodes together')
     p.add_argument('--slot', type=int, help='Unique listener slot; all ports below ephemeral range')
     p.add_argument('--name')
     p.add_argument('--dry-run', action='store_true')
@@ -63,10 +65,17 @@ def main():
     if capture:
         cmd += ['--trainer.gradient-capture.steps','[1,2,3,4,5]','--trainer.gradient-capture.verify',
                 '--ckpt.interval','5','--ckpt.keep-last','1','--ckpt.save-gradients-and-updates']
+    if args.requests_per_engine is not None:
+        limit = str(args.requests_per_engine)
+        cmd += ['--inference.vllm.max-num-seqs', limit,
+                '--orchestrator.concurrency.initial-inflight', limit,
+                '--orchestrator.concurrency.min-inflight', limit,
+                '--orchestrator.concurrency.max-inflight', limit]
     if args.dry_run:
         cmd += ['--dry-run']
     record = dict(commit=commit,model=MODEL,model_revision=REVISION,index=args.index,name=name,
-                  lr=lr,batch_size=batch,steps=steps,capture=capture,pack=args.pack,gpus=args.gpus,slot=slot,command=cmd)
+                  lr=lr,batch_size=batch,steps=steps,capture=capture,pack=args.pack,gpus=args.gpus,slot=slot,
+                  requests_per_engine=args.requests_per_engine,command=cmd)
     print(json.dumps(record),flush=True)
     print(shlex.join(cmd),flush=True)
     env = dict(os.environ,HIP_VISIBLE_DEVICES=args.gpus,CUDA_VISIBLE_DEVICES=args.gpus)

@@ -52,3 +52,12 @@ The session budget is eight MI355X GPUs for120 minutes from node join, plus up t
 `vllm/vllm-openai-rocm@sha256:596db6504233a5d8575bdc0f6c4c8b245bd7f496bb4024705208081923afb9b3`.
 The experiment report records actual packing/concurrency, timings, failures,
 learning curves, memory/activity samples and completed update counts.
+
+The additional concurrency controls use `--requests-per-engine 128`, `256`, or
+`512` to set both vLLM sequence capacity and fixed orchestrator in-flight episodes.
+The base sweep retains its adaptive 128 initial / 256 maximum in-flight setting.
+Compare 1/2/4 independent runs per inference/trainer pair at 128 requests, then
+128/256/512 requests at one run per pair. Each control starts from the same model,
+uses batch256, LR1e-5 and pack16384, and records startup separately from its
+bounded measurement window. These are short, unrepeated comparisons under the
+same rental deadline; other pairs' training remains an external source of load.
