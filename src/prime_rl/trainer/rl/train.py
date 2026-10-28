@@ -22,6 +22,7 @@ from prime_rl.configs.trainer import TrainerConfig
 from prime_rl.trainer.rl.data import (
     DataLoader,
     FakeDataLoader,
+    drop_micro_batches,
     prepare_micro_batch,
     raise_score_centering_data_errors,
     score_centering_data_errors,
@@ -312,6 +313,31 @@ def train(config: TrainerConfig):
         logger.debug("Loading batch")
         load_data_start_time = time.perf_counter()
         micro_batches = dataloader.get_batch()
+        dropped_micro_batches = 0
+        if not config.data.fake:
+            # Ranks that share a data rank train the same micro batches, so they must drop
+            # the same ones even when only one of them failed to fetch.
+            failed = torch.zeros(dataloader.dp_world_size, len(micro_batches), device="cuda")
+            failed[dataloader.dp_rank, dataloader.failed_micro_batches] = 1
+            dist.all_reduce(failed, op=dist.ReduceOp.MAX)
+            # Every rank has fetched its arrays now, so one rank per data rank frees them
+            # (dummy micro batches may reuse another data rank's, hence after the world
+            # all-reduce).
+            if world.rank % (world.world_size // dataloader.dp_world_size) == 0:
+                dataloader.release_payloads()
+            # A step where no micro batch's arrays could be fetched anywhere is not a
+            # transient failure (unreachable or mismatched env servers): stop instead of
+            # training on nothing.
+            if failed.numel() and bool(failed.all()):
+                raise RuntimeError(
+                    "Could not fetch the training arrays of any micro batch this step; check that "
+                    "trainer ranks reach the env servers' payload URLs (see the trainer and env-server logs)"
+                )
+            dropped = failed[dataloader.dp_rank].nonzero().flatten().tolist()
+            drop_micro_batches(micro_batches, dropped)
+            dropped_micro_batches = int(failed.sum().item())
+            if dropped:
+                logger.warning(f"Dropped {len(dropped)} micro batches whose payloads could not be fetched")
         load_data_time = time.perf_counter() - load_data_start_time
         logger.debug(f"Loaded batch in {format_time(load_data_time)}")
 
@@ -763,6 +789,7 @@ def train(config: TrainerConfig):
             "time/step": step_time,
             "time/wait_for_batch": wait_for_batch_time,
             "time/load_data": load_data_time,
+            "payload/dropped_micro_batches": dropped_micro_batches,
             "time/broadcast_weights": broadcast_weights_time,
             "time/save_ckpt": save_ckpt_time,
             "time/forward_backward": forward_backward_time,
