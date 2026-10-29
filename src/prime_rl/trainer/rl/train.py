@@ -614,6 +614,8 @@ def train(config: TrainerConfig):
         grad_norm: torch.Tensor | None = None
         if config.optim.max_norm is not None:
             grad_norm = clip_grad_norm_(gradient_manager, model, config.optim.max_norm)
+            if not torch.isfinite(grad_norm):
+                raise FloatingPointError(f"Non-finite gradient norm at step {progress.step}; optimizer update aborted")
 
         # Update the model parameters
         optimizer.step()
