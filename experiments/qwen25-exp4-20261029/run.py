@@ -26,9 +26,11 @@ def main():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--requests", type=int, choices=(128, 256, 512), default=128)
     p.add_argument("--head-chunk", type=int, default=8192)
+    p.add_argument("--flash-attention-backend", choices=("ck", "triton"), default="ck")
     p.add_argument("--profile-step", type=int)
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
+    os.environ["FLASH_ATTENTION_TRITON_AMD_ENABLE"] = "TRUE" if args.flash_attention_backend == "triton" else "FALSE"
     gpus = args.gpus.split(",")
     if len(gpus) not in (1, 2) or len(set(gpus)) != len(gpus) or not all(g.isdigit() for g in gpus):
         p.error("--gpus needs one ordinal or two distinct ordinals")
