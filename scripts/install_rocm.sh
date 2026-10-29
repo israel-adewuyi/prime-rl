@@ -40,7 +40,8 @@ FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE FLASH_ATTENTION_FORCE_BUILD=TRUE \
 
 if [[ "$mode" == rl ]]; then
     uv --no-config pip install --python "$runtime_python" \
-        --constraint "$manifest_dir/runtime-constraints.txt" -e deps/verifiers/environments/reverse_text
+        --constraint "$manifest_dir/runtime-constraints.txt" -e deps/verifiers/environments/reverse_text \
+        -e deps/verifiers/environments/alphabet_sort
 fi
 uv --no-config pip check --python "$runtime_python"
 uv --no-config pip freeze --python "$runtime_python" > "$manifest_dir/installed.txt"

@@ -149,6 +149,8 @@ class LlamaPreTrainedModel(PreTrainedModelPrimeRL):
 
 @auto_docstring
 class LlamaModel(LlamaPreTrainedModel):
+    decoder_layer_cls = LlamaDecoderLayer
+
     def __init__(self, config: LlamaConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
@@ -156,10 +158,12 @@ class LlamaModel(LlamaPreTrainedModel):
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList(
-            [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+            [self.decoder_layer_cls(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self.norm = RMSNorm(RMSNormConfig(hidden_size=config.hidden_size, eps=config.rms_norm_eps))
-        if hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict):
+        if isinstance(getattr(config, "rope_parameters", None), dict):
+            rope_type = config.rope_parameters.get("rope_type", "default")
+        elif hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict):
             rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
         else:
             rope_type = "default"
@@ -221,6 +225,7 @@ class LlamaModel(LlamaPreTrainedModel):
 
 @auto_docstring
 class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
+    model_cls = LlamaModel
     _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
@@ -228,7 +233,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     def __init__(self, config):
         super().__init__(config)
 
-        self.model = LlamaModel(config)
+        self.model = self.model_cls(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 

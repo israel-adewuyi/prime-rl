@@ -691,6 +691,9 @@ class TrainerConfig(BaseConfig):
     trace_path: Path | None = None
     """Path to write the PyTorch profiler trace to."""
 
+    trace_step: int | None = Field(None, ge=1)
+    """Record only this RL optimizer step when trace_path is set; None traces the whole loop."""
+
     dist_timeout_seconds: int = 3600
     """Timeout in seconds for torch distributed ops."""
 

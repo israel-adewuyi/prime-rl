@@ -360,8 +360,8 @@ def get_model(
         ),
     )
     model_config.use_cache = False
-    if torch.version.hip is not None and model_config.model_type not in {"qwen3", "lfm2", "llama"}:
-        raise ValueError("The ROCm trainer profile supports dense Qwen3, LFM2, and Llama only.")
+    if torch.version.hip is not None and model_config.model_type not in {"qwen2", "qwen3", "lfm2", "llama"}:
+        raise ValueError("The ROCm trainer profile supports dense Qwen2/Qwen2.5, Qwen3, LFM2, and Llama only.")
     is_vlm_arch = is_vlm_architecture(model_config)
 
     if is_vlm_training:

@@ -249,7 +249,8 @@ def train(config: TrainerConfig):
 
     logger.info(f"Starting training loop (max_steps={config.max_steps or 'infinite'})")
     maybe_record_function = nullcontext
-    if config.trace_path:
+    prof = None
+    if config.trace_path and config.trace_step is None:
         logger.info(f"Tracing to {config.trace_path}")
         prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True).__enter__()
         maybe_record_function = record_function
@@ -263,6 +264,10 @@ def train(config: TrainerConfig):
         is_last_step = config.max_steps is not None and progress.step >= config.max_steps
 
         logger.debug(f"Starting training step {progress.step}")
+        if config.trace_path and config.trace_step == progress.step:
+            logger.info(f"Tracing optimizer step {progress.step} to {config.trace_path}")
+            prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True).__enter__()
+            maybe_record_function = record_function
         step_start_time = time.perf_counter()
 
         # Broadcast the incoming policy (v{progress.step-1}) before waiting for its
@@ -749,11 +754,20 @@ def train(config: TrainerConfig):
         if heart is not None:
             heart.beat()
 
+        if prof is not None and config.trace_step is not None:
+            prof.__exit__(None, None, None)
+            config.trace_path.mkdir(parents=True, exist_ok=True)
+            trace_file = str(config.trace_path / f"trace_{dist.get_rank()}_step_{progress.step}.json.gz")
+            prof.export_chrome_trace(trace_file)
+            logger.info(f"Saved single-step trace to {trace_file}")
+            prof = None
+            maybe_record_function = nullcontext
+
         if is_last_step:
             break
         progress.step += 1
 
-    if config.trace_path:
+    if prof is not None:
         prof.__exit__(None, None, None)
         config.trace_path.mkdir(parents=True, exist_ok=True)
         trace_file = str(config.trace_path / f"trace_{dist.get_rank()}.json.gz")
