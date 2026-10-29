@@ -777,7 +777,7 @@ class TrainerConfig(BaseConfig):
 
     @model_validator(mode="after")
     def dont_do_massive_traces(self):
-        if self.trace_path:
+        if self.trace_path and self.trace_step is None:
             if self.max_steps is None:
                 raise ValueError("Must specify max_steps when tracing")
             if self.max_steps >= 10:
