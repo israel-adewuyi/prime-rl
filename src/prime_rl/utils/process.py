@@ -80,7 +80,9 @@ def torchrun_cmd(
     from prime_rl.utils.utils import get_free_port
 
     return [
-        "torchrun",
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
         "--role=trainer",
         f"--rdzv-endpoint=localhost:{get_free_port()}",
         f"--rdzv-id={uuid.uuid4().hex}",
