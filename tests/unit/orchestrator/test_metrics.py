@@ -307,3 +307,24 @@ def test_compute_pass_metrics_matches_closed_form():
     assert out["pass@2"] == 1.0 - math.comb(2, 2) / math.comb(4, 2)
     assert out["pass^2"] == math.comb(2, 2) / math.comb(4, 2)
     assert set(out) == {"pass@1", "pass@2", "pass@4", "pass^1", "pass^2", "pass^4"}
+
+
+@pytest.mark.parametrize(("override", "expected"), [(None, 16), (128, 128), (256, 256)])
+def test_dispatch_admission_burst_preserves_default_and_refunds(override, expected):
+    import time
+
+    from prime_rl.orchestrator.dispatcher import Dispatcher
+
+    dispatcher = object.__new__(Dispatcher)
+    dispatcher.admission_burst = override
+    dispatcher.min_burst = 16
+    dispatcher.max_inflight = 128
+    dispatcher.admission_window_s = 5.0
+    dispatcher.admission_window_start = time.monotonic()
+    dispatcher.admissions_in_window = expected
+    dispatcher.current_inflight = 1
+    assert dispatcher.admission_budget() == 0
+    dispatcher.release(refund_admission=True)
+    assert dispatcher.admission_budget() == 1
+    dispatcher.admission_window_start -= 6.0
+    assert dispatcher.admission_budget() == expected

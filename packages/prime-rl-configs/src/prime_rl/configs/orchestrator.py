@@ -496,6 +496,11 @@ class ConcurrencyConfig(BaseConfig):
     max_inflight: int | None = Field(1024, ge=1)
     """Maximum number of in-flight episodes. Set it to avoid runaway concurrency, especially to limit other external resources (e.g. sandboxes). None removes the ceiling."""
 
+    admission_burst: int | None = Field(None, ge=1)
+    """Maximum net episode admissions per five-second window. None preserves
+    max(largest group size, inflight cap // 10). Natural completions refund
+    admissions, so this limits expansion rather than steady-state throughput."""
+
     @model_validator(mode="after")
     def validate_bounds(self):
         if self.max_inflight is not None:

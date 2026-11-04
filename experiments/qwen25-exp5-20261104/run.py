@@ -19,6 +19,9 @@ CONDITIONS = {
     "shared-alphabet-1": ("alphabet-sort", "3", 3, 43, None),
     "shared-reverse-0": ("reverse-text", "3", 4, 42, None),
     "shared-reverse-1": ("reverse-text", "3", 5, 43, None),
+    "supply-control": ("alphabet-sort", "0", 6, 42, None),
+    "supply-refill128": ("alphabet-sort", "1", 7, 42, None),
+    "supply-pipeline256": ("alphabet-sort", "2", 8, 42, None),
 }
 
 
@@ -29,6 +32,13 @@ def build_raw(condition: str, output_dir: Path, model_path: str, gpus: str | Non
     if len(devices) != expected_devices or len(set(devices)) != len(devices) or not all(d.isdigit() for d in devices):
         raise ValueError(f"{condition} requires {expected_devices} distinct physical GPU ordinal(s)")
     raw = tomllib.loads(Path(__file__).with_name("base.toml").read_text())
+    if condition.startswith("supply-"):
+        raw["max_steps"] = 30
+        raw["orchestrator"]["log"] = {"interval": 1}
+        cap = 256 if condition == "supply-pipeline256" else 128
+        raw["orchestrator"]["concurrency"].update(initial_inflight=cap, min_inflight=cap, max_inflight=cap)
+        if condition != "supply-control":
+            raw["orchestrator"]["concurrency"]["admission_burst"] = cap
     raw["model"]["name"] = model_path
     raw["run"] = {"name": condition}
     raw["output_dir"] = str(output_dir.resolve())
@@ -53,6 +63,8 @@ def build_raw(condition: str, output_dir: Path, model_path: str, gpus: str | Non
         engine_rpc=18000 + slot * 50,
         rollout=21000 + slot * 50,
     )
+    if condition.startswith("supply-"):
+        ports["rccl_diagnostics"] = 27500 + slot
     raw["inference"]["server"] = dict(host="127.0.0.1", port=ports["router"])
     raw["inference"]["backend_port"] = ports["backend"]
     raw["inference"]["vllm"].update(seed=seed, data_parallel_rpc_port=ports["engine_rpc"])
@@ -139,6 +151,8 @@ def main():
         subprocess.run(train_cmd, cwd=repo, check=True)
         return
     common_env = dict(os.environ, **DEFAULT_COMMON_ENV_VARS)
+    if "rccl_diagnostics" in ports:
+        common_env["NCCL_RAS_ADDR"] = f"127.0.0.1:{ports['rccl_diagnostics']}"
     with ProcessGroup() as processes:
         processes.start(
             "inference",

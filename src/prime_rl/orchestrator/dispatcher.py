@@ -144,6 +144,7 @@ class Dispatcher:
         run_id: str,
         run_name: str | None,
         on_episode_complete: Callable[[int], None] | None = None,
+        admission_burst: int | None = None,
     ) -> None:
         self.policy = policy
         self.progress = progress
@@ -174,6 +175,7 @@ class Dispatcher:
         # This keeps a raised cap or post-drain refill from landing a wall of
         # prefills at once, without rate-limiting fast-turning workloads at
         # steady state.
+        self.admission_burst = admission_burst
         self.admission_window_s = 5.0
         self.admission_window_start = time.monotonic()
         self.admissions_in_window = 0
@@ -266,14 +268,17 @@ class Dispatcher:
         if shed:
             get_logger().warning(f"Cancelled {shed} youngest in-flight episodes after overload cut")
 
+    @property
+    def admission_burst_limit(self) -> int:
+        return self.admission_burst or max(self.min_burst, self.max_inflight // 10)
+
     def admission_budget(self) -> int:
         """Admissions still allowed in the current burst window."""
         now = time.monotonic()
         if now - self.admission_window_start >= self.admission_window_s:
             self.admission_window_start = now
             self.admissions_in_window = 0
-        burst_cap = max(self.min_burst, self.max_inflight // 10)
-        return burst_cap - self.admissions_in_window
+        return self.admission_burst_limit - self.admissions_in_window
 
     @property
     def inflight_by_env(self) -> dict[tuple[WorkKind, str], int]:
@@ -862,7 +867,14 @@ class Dispatcher:
     def gauges(self) -> dict[str, float]:
         """Instantaneous, read-only gauges sampled by the periodic logger."""
         staleness = self.inflight_staleness()
+        used = self.admissions_in_window if time.monotonic() - self.admission_window_start < self.admission_window_s else 0
         return {
+            "dispatcher/admission/remaining": float(self.admission_burst_limit - used),
+            "dispatcher/admission/burst": float(self.admission_burst_limit),
+            "dispatcher/gate/policy_update": float(self.policy_update_pending),
+            "dispatcher/gate/train_allowed": float(self.dispatch_allowed.is_set()),
+            "dispatcher/capacity/available": float(self.available_permits),
+            "dispatcher/output_queue": float(self.out_q.qsize()),
             "dispatcher/inflight/train": float(self.inflight_train_count),
             "dispatcher/inflight/eval": float(self.inflight_eval_count),
             "dispatcher/queued/eval": float(self.queued_eval_examples),

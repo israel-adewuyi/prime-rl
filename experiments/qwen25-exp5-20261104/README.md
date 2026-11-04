@@ -23,3 +23,11 @@ Use built-in AlphabetSort and ReverseText tasks/rewards. Evaluation selects the 
 Stage the generated subprocess harness environment on node-local storage before rollout startup. Preserve source, model cache and requested results on /mnt/shared. Monitor CPU quota/throttling, process and I/O pressure, GPU activity/memory, generated and admitted rollouts, no-signal rejection, batch waiting, forward/backward and weight refresh. A trainer trace does not include inference/harness activity in their other processes. Report per-run elapsed time and aggregate completed updates per GPU-hour, including startup and separate later-step statistics; do not interpret GPU busy time as FLOP utilization.
 
 The launcher does not provision GPUs, change bids, upload to HF or start another condition automatically.
+
+## Rollout supply diagnostic
+
+Three 30-update AlphabetSort probes use GPUs0,1,2 respectively: `supply-control` keeps the 128-episode cap and default16 admission burst; `supply-refill128` uses cap128/burst128; `supply-pipeline256` uses cap256/burst256. The engine stays at128 sequences in all three. All use seed42, B256/group16 and the existing base settings, including eager inference, filesystem refresh and built-in rewards. No new checkpoints. Step21 is profiled and excluded from ordinary timing summaries. The absolute rental cutoff remains authoritative.
+
+Pipeline gauges sample every second: admission budget, free episode permits, policy-update pause, train-dispatch gate and output queue, alongside existing running/waiting inference requests, episode phase timings, rejection and CPU metrics. These are snapshots, not exact elapsed blocking durations. One in-flight episode can spend time in harness/setup/scoring rather than an engine request; the engine and orchestrator limits have different meanings.
+
+`orchestrator.concurrency.admission_burst` is optional and preserves previous behavior when omitted. The five-second window meters net expansion; natural completions refund admissions. This probe does not disable zero-advantage pruning, change group size, alter sampling, or relax policy-version gates. Compare useful admitted rollouts and completed updates, not only GPU request occupancy. Separate RCCL diagnostic ports are also recorded for these probes.
