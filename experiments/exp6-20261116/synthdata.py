@@ -23,7 +23,7 @@ def serve_command(layout, port, final=False):
         '--dtype', 'bfloat16', '--tensor-parallel-size', str(tp), '--data-parallel-size', str(dp),
         '--distributed-executor-backend', 'mp', '--max-model-len', '65536' if final else '8192',
         '--max-num-seqs', '16' if final else '64', '--gpu-memory-utilization', '0.85', '--seed', '42',
-        '--language-model-only'] + (['--enable-auto-tool-choice','--tool-call-parser','qwen3_coder','--reasoning-parser','qwen3'] if final else [])
+        '--language-model-only'] + (['--enable-auto-tool-choice','--tool-call-parser','qwen3_coder','--reasoning-parser','qwen3'] if final else ['--no-enable-prefix-caching'])
 
 
 def benchmark_command(layout, concurrency, output, port):
