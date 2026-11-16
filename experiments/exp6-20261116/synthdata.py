@@ -16,14 +16,14 @@ LAYOUTS = {'tp4': (4, 1), 'tp2-dp2': (2, 2), 'dp4': (1, 4)}
 PREFIX = ['uv', '--no-config', 'run', '--no-project', '--active', 'vllm']
 
 
-def serve_command(layout, port):
+def serve_command(layout, port, final=False):
     tp, dp = LAYOUTS[layout]
     return PREFIX + ['serve', MODEL, '--revision', REVISION, '--tokenizer-revision', REVISION,
-        '--served-model-name', 'qwen38-27b', '--host', '127.0.0.1', '--port', str(port),
+        '--served-model-name', *(['qwen38-27b', 'retail-agent'] if final else ['qwen38-27b']), '--host', '127.0.0.1', '--port', str(port),
         '--dtype', 'bfloat16', '--tensor-parallel-size', str(tp), '--data-parallel-size', str(dp),
-        '--distributed-executor-backend', 'mp', '--max-model-len', '8192',
-        '--max-num-seqs', '64', '--gpu-memory-utilization', '0.85', '--seed', '42',
-        '--language-model-only']
+        '--distributed-executor-backend', 'mp', '--max-model-len', '65536' if final else '8192',
+        '--max-num-seqs', '16' if final else '64', '--gpu-memory-utilization', '0.85', '--seed', '42',
+        '--language-model-only'] + (['--enable-auto-tool-choice','--tool-call-parser','qwen3_coder','--reasoning-parser','qwen3'] if final else [])
 
 
 def benchmark_command(layout, concurrency, output, port):
@@ -56,8 +56,9 @@ def main():
     env = dict(os.environ, HIP_VISIBLE_DEVICES='4,5,6,7', CUDA_VISIBLE_DEVICES='4,5,6,7',
         HF_HOME='/mnt/shared/.cache/huggingface', VLLM_WORKER_MULTIPROC_METHOD='spawn')
     if args.action == 'serve':
-        print(shlex.join(commands[args.layout]['serve']), flush=True)
-        raise SystemExit(subprocess.call(commands[args.layout]['serve'], env=env))
+        command=serve_command(args.layout,args.port,final=True)
+        print(shlex.join(command), flush=True)
+        raise SystemExit(subprocess.call(command, env=env))
     output.mkdir(parents=True, exist_ok=False)
     (output / 'commands.json').write_text(json.dumps(commands, indent=2))
     for layout, record in commands.items():
