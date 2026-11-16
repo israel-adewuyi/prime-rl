@@ -1138,14 +1138,15 @@ def gradient_capture_trainer_settings():
     }
 
 
-def test_gradient_capture_loads_from_toml(tmp_path):
+@pytest.mark.parametrize("statistics_device", ["cpu", "cuda"])
+def test_gradient_capture_loads_from_toml(tmp_path, statistics_device):
     config_file = tmp_path / "capture.toml"
     write_toml(
         config_file,
         {
             "max_steps": 2,
             "model": {"compile": "None", "ac": "None", "ac_offloading": "None", "ep": 1},
-            "gradient_capture": {"steps": [1, 2], "verify": True},
+            "gradient_capture": {"steps": [1, 2], "verify": True, "statistics_device": statistics_device},
         },
     )
     config = cli(TrainerConfig, args=["@", str(config_file)])
@@ -1153,6 +1154,7 @@ def test_gradient_capture_loads_from_toml(tmp_path):
     assert config.gradient_capture is not None
     assert config.gradient_capture.steps == [1, 2]
     assert config.gradient_capture.verify is True
+    assert config.gradient_capture.statistics_device == statistics_device
     assert config.gradient_capture.verify_rtol == 0.05
     assert config.gradient_capture.verify_atol == 1e-6
     assert config.model.compile is config.model.ac is config.model.ac_offloading is None

@@ -620,6 +620,9 @@ class GradientCaptureConfig(BaseConfig):
     steps: list[Annotated[int, Field(ge=1)]] = Field(min_length=1)
     """Trainer update numbers at which to log online per-rollout gradient statistics before clipping."""
 
+    statistics_device: Literal["cpu", "cuda"] = "cpu"
+    """Where to accumulate FP64 rollout statistics. CUDA uses extra GPU memory and avoids per-rollout CPU copies."""
+
     verify: bool = False
     """Check that capture preserves accumulated optimizer gradients and reconstructs the batch gradient."""
 

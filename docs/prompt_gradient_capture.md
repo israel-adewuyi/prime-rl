@@ -7,6 +7,7 @@ checkpoints. The two schedules are independent:
 ```toml
 [trainer.gradient_capture]
 steps = [1, 10, 50]
+statistics_device = "cuda"
 verify = false
 
 [ckpt]
@@ -31,8 +32,13 @@ schedule is retained. Sequences are not regrouped by prompt: in the single-turn
 workflow used here, each sequence is one rollout. There is no extra division
 of each rollout loss by rollout count.
 
-At each selected update, the trainer accumulates a CPU FP64 gradient sum `S`,
-the sum of squared gradient norms `Q`, and the rollout count `n`. It reports:
+At each selected update, the trainer accumulates an FP64 gradient sum `S`,
+the sum of squared gradient norms `Q`, and the rollout count `n`.
+`statistics_device = "cpu"` (the default) keeps the accumulator on CPU.
+`statistics_device = "cuda"` keeps both sums on the gradients' GPU and transfers
+only two scalar moments at finalization, avoiding per-rollout CPU copies.
+CUDA accumulation checks for nonfinite moments at finalization, before the
+optimizer update. It reports:
 
 ```text
 S = sum(g_i)
@@ -61,7 +67,12 @@ have `"producer": "trainer"`, an integer `step`, and flat `snr/...` keys.
 An enabled W&B monitor receives the same metrics. Individual rollout gradient
 files are not written; the running accumulation uses memory proportional to
 one model gradient, rather than the number of rollouts. The FP64 sum for
-230M parameters takes approximately 1.84 GB of CPU memory.
+230M parameters takes approximately 1.84 GB on the selected statistics device,
+with additional temporary memory for per-parameter FP64 conversion.
+
+The [standalone SNR benchmark](../benchmarks/snr/README.md) compares CPU and GPU
+accumulation on precomputed gradients. It verifies results before timing;
+training can keep `verify = false`.
 
 The loss interface is independent of the algorithm or policy surrogate.
 Sequence contributions add up to the scalar used by training. The demo sets

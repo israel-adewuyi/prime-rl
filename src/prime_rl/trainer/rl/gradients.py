@@ -10,6 +10,7 @@ from torch.distributed.fsdp import FSDPModule
 from torch.distributed.tensor import DTensor
 
 from prime_rl.configs.trainer import GradientCaptureConfig
+from prime_rl.trainer.rl.gradient_statistics import CUDAGradientStatistics, GradientStatistics
 
 if TYPE_CHECKING:
     from prime_rl.trainer.rl.data import TensorMicroBatch
@@ -19,74 +20,6 @@ def _cpu_copy(tensor: Tensor, dtype: torch.dtype = torch.float32) -> Tensor:
     if isinstance(tensor, DTensor):
         tensor = tensor.to_local()
     return tensor.detach().to(device="cpu", dtype=dtype, copy=True)
-
-
-class GradientStatistics:
-    """Keep one gradient sum and a scalar sum of squared rollout norms."""
-
-    def __init__(self):
-        self.gradient_sum: dict[str, Tensor | None] = {}
-        self.squared_norm_sum = 0.0
-        self.count = 0
-
-    def update(self, gradients: dict[str, Tensor | None]) -> None:
-        if self.count == 0:
-            self.gradient_sum = dict.fromkeys(gradients)
-        elif gradients.keys() != self.gradient_sum.keys():
-            raise ValueError("Gradient parameter names changed within a capture step")
-        squared_norms = []
-        for name, gradient in gradients.items():
-            if gradient is None:
-                continue
-            value = _cpu_copy(gradient, dtype=torch.float64)
-            if not bool(torch.isfinite(value).all()):
-                raise ValueError(f"Non-finite rollout gradient: {name}")
-            squared_norms.append(torch.dot(value.reshape(-1), value.reshape(-1)).item())
-            if self.gradient_sum[name] is None:
-                self.gradient_sum[name] = value
-            else:
-                self.gradient_sum[name].add_(value)
-        self.squared_norm_sum = math.fsum((self.squared_norm_sum, math.fsum(squared_norms)))
-        if not math.isfinite(self.squared_norm_sum):
-            raise ValueError("Non-finite sum of squared rollout-gradient norms")
-        self.count += 1
-
-    def clear(self) -> None:
-        self.gradient_sum.clear()
-        self.squared_norm_sum = 0.0
-        self.count = 0
-
-    def finalize(self) -> dict[str, float | int]:
-        metrics: dict[str, float | int] = {"snr/count": self.count}
-        if self.count:
-            sum_squared_norm = math.fsum(
-                torch.dot(value.reshape(-1), value.reshape(-1)).item()
-                for value in self.gradient_sum.values()
-                if value is not None
-            )
-            if not math.isfinite(sum_squared_norm):
-                raise ValueError("Non-finite norm of the accumulated rollout gradients")
-            mean_squared_norm = sum_squared_norm / self.count**2
-            metrics["snr/mean_norm"] = math.sqrt(mean_squared_norm)
-            if self.count > 1:
-                centered_sum = self.squared_norm_sum - sum_squared_norm / self.count
-                # The subtraction can lose precision when every rollout has nearly the same gradient.
-                roundoff = (
-                    8
-                    * self.count
-                    * torch.finfo(torch.float64).eps
-                    * max(self.squared_norm_sum, sum_squared_norm / self.count)
-                )
-                if centered_sum < -roundoff:
-                    raise ValueError("Squared gradient norms produced a negative variance beyond roundoff")
-                if abs(centered_sum) <= roundoff:
-                    centered_sum = 0.0
-                variance = centered_sum / (self.count - 1)
-                metrics["snr/variance"] = variance
-                if variance > 0:
-                    metrics["snr/value"] = mean_squared_norm / variance
-        self.clear()
-        return metrics
 
 
 class RolloutGradientCapture:
@@ -100,7 +33,7 @@ class RolloutGradientCapture:
             raise ValueError("Rollout gradient capture requires exactly one trainer GPU")
         self.model = model
         self.config = config
-        self.statistics = GradientStatistics()
+        self.statistics = CUDAGradientStatistics() if config.statistics_device == "cuda" else GradientStatistics()
         self.reshard_policies: list[tuple[FSDPModule, bool]] = []
         seen_states = set()
         for module in model.modules():
@@ -195,6 +128,8 @@ class RolloutGradientCapture:
     def _verify_batch_gradient(self) -> None:
         for name, param in self.optimizer_params.items():
             actual = self.statistics.gradient_sum.get(name)
+            if actual is not None:
+                actual = actual.cpu()
             if param.grad is None:
                 if actual is not None and bool(actual.count_nonzero()):
                     raise RuntimeError(f"Captured a gradient but normal backward left {name} unused")
