@@ -1,0 +1,39 @@
+# Pre-update numerical control: same first seeded packed batch twice, baseline then Triton.
+# AdamW step is intercepted; no weights are updated; FP32 gradients are compared on device.
+# Eight 16K packs/update; fake packed segments use seeded uniform random token IDs,
+# random advantages/inference logprobs, all-token loss masks and temperature 1.
+max_steps = 2
+matmul_precision = "highest"
+[model]
+name = "/mnt/shared/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775"
+seq_len = 16384
+attn = "flash_attention_2"
+compile = "None"
+ac = "None"
+ac_offloading = "None"
+optim_cpu_offload = false
+cp = 1
+ep = 1
+fused_lm_head_token_chunk_size = 8192
+optimization_dtype = "float32"
+reduce_dtype = "float32"
+[model.fusions]
+enabled = []
+[optim]
+type = "adamw"
+lr = 1e-6
+weight_decay = 0.0
+max_norm = 1.0
+betas1 = 0.9
+betas2 = 0.999
+[scheduler]
+type = "constant"
+[loss]
+type = "ipo"
+eps = 0.3
+max_importance_ratio = 10000.0
+adv_tau = 1.0
+[data.fake]
+batch_size = 8
+generate_samples = true
+[monitors.file]
