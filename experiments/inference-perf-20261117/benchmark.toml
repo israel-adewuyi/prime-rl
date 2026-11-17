@@ -9,6 +9,7 @@ batch_requests = 512
 concurrency = 128
 repeats = 3
 parity_requests = 32
+parity_concurrency = 1
 profile_requests = 32
 words_per_prompt = 12
 words = ["apple", "zebra", "banana", "yellow", "cat", "river", "dog", "orange", "green", "forest", "island", "moon", "sun", "tiger", "blue", "kiwi", "lemon", "ocean", "purple", "violet", "white", "black", "pear", "grape"]

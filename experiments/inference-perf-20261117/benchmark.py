@@ -17,6 +17,7 @@ async def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("base_url")
     parser.add_argument("--profile", action="store_true")
+    parser.add_argument("--parity-only", action="store_true")
     args = parser.parse_args()
     c = tomllib.loads(args.config.read_text())
     args.output.mkdir(parents=True, exist_ok=True)
@@ -27,11 +28,12 @@ async def main():
         prompts.append("<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nSort these words alphabetically. Put the sorted words inside <answer> and </answer> tags: " + ", ".join(words) + "<|im_end|>\n<|im_start|>assistant\n")
     (args.output / "prompts.json").write_text(json.dumps(prompts))
     semaphore = asyncio.Semaphore(c["concurrency"])
+    parity_semaphore = asyncio.Semaphore(c["parity_concurrency"])
     timeout = aiohttp.ClientTimeout(total=180)
     connector = aiohttp.TCPConnector(limit=c["concurrency"])
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         async def request(i, greedy=False):
-            async with semaphore:
+            async with (parity_semaphore if args.parity_only else semaphore):
                 body = dict(model=c["model"], prompt=prompts[i], max_tokens=c["max_tokens"], temperature=0.0 if greedy else c["temperature"], top_p=c["top_p"], seed=c["seed"] + i, stream=True, stream_options={"include_usage": True}, logprobs=1)
                 start = time.perf_counter()
                 first = None
@@ -68,7 +70,9 @@ async def main():
             return summary
 
         summaries = [await batch("warmup", c["warmup_requests"])]
-        if args.profile:
+        if args.parity_only:
+            summaries.append(await batch("greedy-sequential", c["parity_requests"], True))
+        elif args.profile:
             async with session.post(args.base_url + "/start_profile") as response:
                 print("START_PROFILE", response.status, await response.text(), flush=True)
             summaries.append(await batch("profile", c["profile_requests"]))
