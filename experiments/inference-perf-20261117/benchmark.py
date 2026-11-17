@@ -28,7 +28,8 @@ async def main():
     (args.output / "prompts.json").write_text(json.dumps(prompts))
     semaphore = asyncio.Semaphore(c["concurrency"])
     timeout = aiohttp.ClientTimeout(total=180)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    connector = aiohttp.TCPConnector(limit=c["concurrency"])
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         async def request(i, greedy=False):
             async with semaphore:
                 body = dict(model=c["model"], prompt=prompts[i], max_tokens=c["max_tokens"], temperature=0.0 if greedy else c["temperature"], top_p=c["top_p"], seed=c["seed"] + i, stream=True, stream_options={"include_usage": True}, logprobs=1)
