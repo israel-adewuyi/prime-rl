@@ -1,7 +1,7 @@
 # Synthetic compute control, not an AlphabetSort throughput trial.
 # Eight 16K packs/update; fake packed segments use seeded uniform random token IDs,
 # random advantages/inference logprobs, all-token loss masks and temperature 1.
-max_steps = 3
+max_steps = 5
 trace_step = 2
 matmul_precision = "highest"
 [model]
