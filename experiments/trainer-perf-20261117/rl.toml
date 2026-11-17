@@ -1,0 +1,98 @@
+# Qwen/Qwen2.5-0.5B-Instruct, pinned cached revision.
+dashboard = false
+max_steps = 5
+
+[run]
+name = "alphabet-perf-baseline-b512"
+[model]
+name = "/mnt/shared/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775"
+[env_vars]
+FLASH_ATTENTION_TRITON_AMD_ENABLE = "FALSE"
+[weight_broadcast]
+type = "filesystem"
+[rollout_transport]
+type = "zmq"
+port = 21900
+[trainer]
+trace_step = 3
+matmul_precision = "highest"
+[trainer.model]
+seq_len = 16384
+attn = "flash_attention_2"
+compile = "None"
+ac = "None"
+ac_offloading = "None"
+optim_cpu_offload = false
+cp = 1
+ep = 1
+fused_lm_head_token_chunk_size = 8192
+[trainer.model.fusions]
+enabled = []
+[trainer.optim]
+type = "adamw"
+lr = 1e-6
+weight_decay = 0.0
+max_norm = 1.0
+betas1 = 0.9
+betas2 = 0.999
+[trainer.scheduler]
+type = "constant"
+[trainer.loss]
+type = "ipo"
+eps = 0.3
+max_importance_ratio = 10000.0
+adv_tau = 1.0
+[trainer.gradient_capture]
+steps = [1]
+statistics_device = "cuda"
+verify = false
+[orchestrator]
+batch_size = 512
+seq_len = 16384
+max_off_policy_steps = 8
+[orchestrator.model.client]
+base_url = "http://127.0.0.1:4900/v1"
+admin_base_url = ["http://127.0.0.1:4901/v1"]
+[orchestrator.concurrency]
+initial_inflight = 128
+min_inflight = 128
+max_inflight = 128
+[orchestrator.renderer]
+name = "default"
+[orchestrator.train]
+group_size = 16
+[orchestrator.train.algo]
+type = "grpo"
+[orchestrator.train.select]
+exclude.idx = ["0:32"]
+[orchestrator.train.sampling]
+temperature = 0.8
+top_p = 1.0
+max_completion_tokens = 128
+[[orchestrator.train.source]]
+name = "alphabet-sort"
+env.taskset.id = "alphabet-sort"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+[orchestrator.eval]
+interval = 1000
+skip_first_step = true
+group_size = 1
+[orchestrator.eval.select]
+include.idx = ["0:32"]
+[orchestrator.eval.sampling]
+temperature = 0.0
+max_completion_tokens = 128
+[[orchestrator.eval.source]]
+name = "alphabet-sort-heldout"
+env.taskset.id = "alphabet-sort"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+[monitors.file]
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 0
+
+# External inference on physical GPU2; trainer physical GPU3.
+# No [ckpt] block: checkpoints are disabled, matching exp6.
+# Optimization/reduction dtypes retain their existing FP32 defaults.
