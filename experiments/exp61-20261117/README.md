@@ -15,8 +15,6 @@ They supply output paths, dry-run mode and physical GPU placement only.
   excluding rollout generation and per-sequence backward extraction. The full-size
   CPU reference at these sample counts can take many minutes; the150-update RL run
   remains the priority under the rental cutoff.
-- `synth.toml` / `retail.toml`: serving comparisons and10 retail tasks ×3 trials,
-  with Qwen for agent, user simulator and semantic judge.
 
 Use the prepared ROCm environment and shared model cache. Run CPU resolution first
 with a distinct output directory:
@@ -28,5 +26,5 @@ uv --no-config run --no-project --active python experiments/exp61-20261117/bench
 
 On an authorized GPU allocation, omit `--dry-run` and use `--output-dir` pointing
 to the fresh run's `runs/` directory. GPU ownership:0 accumulation benchmark,
-1 RL inference/training,2–3 nanoTitan EP2,4–7 Qwen serving and retail.
+1 RL inference/training.
 Keep terminal transcripts and component logs on persistent shared storage.
