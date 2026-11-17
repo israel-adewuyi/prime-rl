@@ -12,4 +12,6 @@ repeats = 7
 compute_dtype = "bfloat16"
 gradient_dtype = "float32"
 statistics_dtype = "float64"
-candidate = "none"
+implementations = ["baseline", "triton_online_update"]
+correctness_rtol = 0.0
+correctness_atol = 0.00001
