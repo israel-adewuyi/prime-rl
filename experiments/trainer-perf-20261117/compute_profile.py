@@ -11,6 +11,7 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("output_dir",type=Path)
     parser.add_argument("implementation",choices=["baseline","triton_online_update"])
+    parser.add_argument("--phase-labels",action="store_true")
     args=parser.parse_args()
     assert os.environ["HIP_VISIBLE_DEVICES"]==os.environ["CUDA_VISIBLE_DEVICES"]=="3"
     import torch
@@ -26,6 +27,19 @@ def main():
     from prime_rl.configs.trainer import TrainerConfig
     from prime_rl.utils.config import dump_resolved_config
     from prime_rl.trainer.rl.train import train
+    if args.phase_labels:
+        import importlib
+        import functools
+        module=importlib.import_module("prime_rl.trainer.rl.train")
+        def labelled(fn,label):
+            @functools.wraps(fn)
+            def call(*a,**kw):
+                with torch.profiler.record_function(label):
+                    return fn(*a,**kw)
+            return call
+        module.compute_loss=labelled(module.compute_loss,"control_loss")
+        module.clip_grad_norm_=labelled(module.clip_grad_norm_,"control_gradient_norm")
+        torch.optim.AdamW.step=labelled(torch.optim.AdamW.step,"control_optimizer")
     if args.implementation=="triton_online_update":
         import prime_rl.trainer.models.layers.lm_head as head
         from online_kernel import online_update
