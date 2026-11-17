@@ -79,6 +79,8 @@ async def main():
                 summaries.append(await batch(f"repeat-{repeat}", c["batch_requests"]))
             summaries.append(await batch("greedy", c["parity_requests"], True))
         (args.output / "summary.json").write_text(json.dumps(summaries, indent=2))
+        if any(item["errors"] for item in summaries):
+            raise RuntimeError("Benchmark contains failed requests; exclude this attempt.")
 
 
 if __name__ == "__main__":
