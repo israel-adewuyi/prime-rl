@@ -1,0 +1,78 @@
+[model]
+name = "Qwen/Qwen3.8-27B"
+revision = "37561816e66b5b9153b1b64c10968c18c1e6f4a0"
+
+[runtime]
+gpus = "4,5,6,7"
+port = 8300
+startup_timeout_seconds = 900
+shutdown_grace_seconds = 60
+poll_seconds = 2
+
+[environment]
+OMP_NUM_THREADS = "2"
+OPENBLAS_NUM_THREADS = "1"
+MKL_NUM_THREADS = "1"
+VLLM_WORKER_MULTIPROC_METHOD = "spawn"
+
+[server.base]
+host = "127.0.0.1"
+dtype = "bfloat16"
+distributed-executor-backend = "mp"
+gpu-memory-utilization = 0.85
+seed = 42
+language-model-only = true
+
+[server.endpoint]
+max-model-len = 65536
+max-num-seqs = 16
+served-model-name = ["qwen38-27b", "retail-agent"]
+enable-auto-tool-choice = true
+tool-call-parser = "qwen3_coder"
+reasoning-parser = "qwen3"
+enable-prefix-caching = false
+
+[server.benchmark]
+max-model-len = 8192
+max-num-seqs = 64
+served-model-name = ["qwen38-27b"]
+enable-prefix-caching = false
+
+[layouts.tp4]
+tensor-parallel-size = 4
+data-parallel-size = 1
+
+[layouts.tp2-dp2]
+tensor-parallel-size = 2
+data-parallel-size = 2
+
+[layouts.dp4]
+tensor-parallel-size = 1
+data-parallel-size = 4
+
+[endpoint]
+layout = "tp4"
+
+[benchmark]
+layouts = ["tp4", "tp2-dp2", "dp4"]
+concurrency = [1, 16, 64]
+
+[benchmark.arguments]
+backend = "openai-chat"
+endpoint = "/v1/chat/completions"
+served-model-name = "qwen38-27b"
+dataset-name = "random"
+random-input-len = 512
+random-output-len = 128
+num-prompts = 128
+request-rate = "inf"
+ignore-eos = true
+seed = 42
+num-warmups = 0
+percentile-metrics = "ttft,tpot,itl,e2el"
+metric-percentiles = "50,90,99"
+save-result = true
+save-detailed = true
+
+[benchmark.arguments.extra-body.chat_template_kwargs]
+enable_thinking = false

@@ -1,0 +1,73 @@
+[model]
+name = "Qwen/Qwen3.8-27B"
+revision = "37561816e66b5b9153b1b64c10968c18c1e6f4a0"
+alias = "retail-agent"
+
+[framework]
+revision = "c06b07dd7c4d4ec61ba6ff9bcdf0b15dd7ef36d4"
+
+[runtime]
+api_base = "http://127.0.0.1:8300/v1"
+endpoint_wait_seconds = 900
+poll_seconds = 5
+request_timeout_seconds = 180
+
+[roles]
+agent = "hosted_vllm/retail-agent"
+user = "hosted_vllm/retail-agent"
+judge = "hosted_vllm/retail-agent"
+
+[llm]
+api_key = "dummy"
+temperature = 0.0
+max_tokens = 2048
+
+[llm.extra_body.chat_template_kwargs]
+enable_thinking = false
+
+[evaluation]
+domain = "retail"
+task-split-name = "base"
+num-tasks = 10
+num-trials = 3
+max-concurrency = 3
+max-steps = 200
+max-errors = 10
+seed = 300
+log-level = "ERROR"
+verbose-logs = true
+llm-log-mode = "all"
+max-retries = 3
+retry-delay = 1.0
+auto-resume = false
+auto-review = false
+hallucination-retries = 3
+communicate-scorer = "semantic"
+
+[judge]
+prompt_version = "communicate-semantic-v1"
+
+[environment]
+UV_FROZEN = "1"
+TOKENIZERS_PARALLELISM = "false"
+OMP_NUM_THREADS = "1"
+OPENBLAS_NUM_THREADS = "1"
+MKL_NUM_THREADS = "1"
+
+[smoke.generation]
+temperature = 0.0
+max_tokens = 256
+
+[smoke.generation.chat_template_kwargs]
+enable_thinking = false
+
+[smoke.chat]
+expected_content = "READY"
+messages = [{role = "user", content = "Reply with the single word READY."}]
+
+[smoke.tool]
+expected_name = "lookup_order"
+expected_arguments = {order_id = 123}
+tool_choice = "auto"
+messages = [{role = "system", content = "You are a retail support assistant. When an order is requested, call lookup_order with its integer order_id. Do not invent order details."}, {role = "user", content = "Please look up order 123."}]
+tools = [{type = "function", function = {name = "lookup_order", description = "Retrieve an order by its integer identifier.", parameters = {type = "object", properties = {order_id = {type = "integer"}}, required = ["order_id"], additionalProperties = false}}}]

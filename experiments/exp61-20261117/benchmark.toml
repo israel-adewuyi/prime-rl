@@ -1,0 +1,11 @@
+# Accumulation of existing gradients; this does not time per-rollout backward extraction.
+parameters = [1000000, 494032768]
+rollouts = [512, 1024]
+tensor_numel = 1000000
+pool_size = 2
+dtype = "bfloat16"
+seed = 42
+threads = 4
+warmup = 1
+repeats = 3
+implementations = ["cpu", "cuda"]
