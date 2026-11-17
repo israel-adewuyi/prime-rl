@@ -200,6 +200,12 @@ def server(config: InferenceConfig):
     parser = make_arg_parser(parser)
     args = parser.parse_args(args=[], namespace=namespace)
     assert args is not None
+    # Namespace defaults bypass argparse's nested-config conversion. The API
+    # profiler router requires the same typed config as the engine workers.
+    if isinstance(args.profiler_config, dict):
+        from vllm.config import ProfilerConfig
+
+        args.profiler_config = ProfilerConfig(**args.profiler_config)
     validate_parsed_serve_args(args)
 
     # Set the worker extension class based on the broadcast backend
