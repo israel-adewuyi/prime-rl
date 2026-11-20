@@ -338,6 +338,7 @@ def train(config: TrainerConfig):
             gradient_capture = RolloutGradientCapture(
                 model,
                 config.gradient_capture,
+                micro_batches,
                 reshard_after_forward=config.model.reshard_after_forward,
             )
             logger.info(f"Computing rollout gradient statistics at step {progress.step}")
@@ -523,7 +524,7 @@ def train(config: TrainerConfig):
             )
 
             if gradient_capture is not None:
-                gradient_capture.capture_microbatch(loss, per_sequence_losses, micro_batch)
+                gradient_capture.capture_microbatch(loss, per_sequence_losses)
                 del per_sequence_losses
 
             # Backward pass

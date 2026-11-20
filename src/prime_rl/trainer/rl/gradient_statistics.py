@@ -1,10 +1,14 @@
-"""Streaming FP64 statistics of already-computed rollout gradients."""
+"""Rollout-gradient statistics with FP32 buffers and FP64 scalar moments."""
 
 import math
 
 import torch
 from torch import Tensor
 from torch.distributed.tensor import DTensor
+
+
+def _squared_norm(value: Tensor) -> Tensor:
+    return torch.linalg.vector_norm(value, dtype=torch.float64).square()
 
 
 class GradientStatistics:
@@ -29,10 +33,10 @@ class GradientStatistics:
                 continue
             if isinstance(gradient, DTensor):
                 gradient = gradient.to_local()
-            value = gradient.detach().to(device="cpu", dtype=torch.float64, copy=True)
+            value = gradient.detach().to(device="cpu", dtype=torch.float32, copy=self.gradient_sum[name] is None)
             if not bool(torch.isfinite(value).all()):
                 raise ValueError(f"Non-finite rollout gradient: {name}")
-            squared_norms.append(torch.dot(value.reshape(-1), value.reshape(-1)).item())
+            squared_norms.append(_squared_norm(value).item())
             if self.gradient_sum[name] is None:
                 self.gradient_sum[name] = value
             else:
@@ -49,9 +53,7 @@ class GradientStatistics:
 
     def _moments(self) -> tuple[float, float]:
         sum_squared_norm = math.fsum(
-            torch.dot(value.reshape(-1), value.reshape(-1)).item()
-            for value in self.gradient_sum.values()
-            if value is not None
+            _squared_norm(value).item() for value in self.gradient_sum.values() if value is not None
         )
         return self.squared_norm_sum, sum_squared_norm
 
@@ -71,7 +73,7 @@ class GradientStatistics:
                 roundoff = (
                     8
                     * self.count
-                    * torch.finfo(torch.float64).eps
+                    * torch.finfo(torch.float32).eps
                     * max(squared_norm_sum, sum_squared_norm / self.count)
                 )
                 if centered_sum < -roundoff:
@@ -101,8 +103,8 @@ class CUDAGradientStatistics(GradientStatistics):
             if gradient.device.type != "cuda" or (device is not None and gradient.device != device):
                 raise ValueError("CUDA gradient statistics require gradients on a single GPU")
             device = gradient.device
-            value = gradient.detach().to(dtype=torch.float64, copy=self.gradient_sum[name] is None)
-            squared_norms.append(torch.dot(value.reshape(-1), value.reshape(-1)))
+            value = gradient.detach().to(dtype=torch.float32, copy=self.gradient_sum[name] is None)
+            squared_norms.append(_squared_norm(value))
             if self.gradient_sum[name] is None:
                 self.gradient_sum[name] = value
             else:
@@ -118,11 +120,7 @@ class CUDAGradientStatistics(GradientStatistics):
     def _moments(self) -> tuple[float, float]:
         if not isinstance(self.squared_norm_sum, Tensor):
             return 0.0, 0.0
-        squared_norms = [
-            torch.dot(value.reshape(-1), value.reshape(-1))
-            for value in self.gradient_sum.values()
-            if value is not None
-        ]
+        squared_norms = [_squared_norm(value) for value in self.gradient_sum.values() if value is not None]
         # Squared norms propagate NaN/Inf; finalize checks them before an optimizer update.
         values = torch.stack((self.squared_norm_sum, torch.stack(squared_norms).sum())).cpu().tolist()
         return values[0], values[1]

@@ -22,11 +22,30 @@ def _cpu_copy(tensor: Tensor, dtype: torch.dtype = torch.float32) -> Tensor:
     return tensor.detach().to(device="cpu", dtype=dtype, copy=True)
 
 
+def _trace_ids(batch: "TensorMicroBatch") -> list[str]:
+    lengths = batch["sequence_lengths"]
+    ids = batch["trace_ids"] if batch["trace_ids"] is not None else [""] * len(lengths)
+    if len(ids) != len(lengths):
+        raise ValueError("Rollout metadata must align with sequence_lengths")
+    if "" in ids:
+        active = batch["loss_mask"].flatten().clone()
+        if batch["rl_weights"] is not None:
+            active &= batch["rl_weights"].flatten() != 0
+        for key in ("ce_weights", "ref_kl_weights"):
+            if batch[key] is not None:
+                active |= batch[key].flatten() != 0
+        for trace_id, mask in zip(ids, active.split(lengths), strict=True):
+            if not trace_id and mask.any():
+                raise ValueError("A sequence with active loss is missing its rollout trace_id")
+    return ids
+
+
 class RolloutGradientCapture:
     def __init__(
         self,
         model: nn.Module,
         config: GradientCaptureConfig,
+        micro_batches: list["TensorMicroBatch"],
         reshard_after_forward: bool = True,
     ):
         if dist.is_initialized() and dist.get_world_size() != 1:
@@ -34,6 +53,12 @@ class RolloutGradientCapture:
         self.model = model
         self.config = config
         self.statistics = CUDAGradientStatistics() if config.statistics_device == "cuda" else GradientStatistics()
+        self.trace_ids = [_trace_ids(batch) for batch in micro_batches]
+        self.micro_step = 0
+        self.last_microbatch = {
+            trace_id: index for index, ids in enumerate(self.trace_ids) for trace_id in ids if trace_id
+        }
+        self.partial_gradients: dict[str, dict[str, Tensor | None]] = {}
         self.reshard_policies: list[tuple[FSDPModule, bool]] = []
         seen_states = set()
         for module in model.modules():
@@ -80,17 +105,35 @@ class RolloutGradientCapture:
             if expected is not None and not torch.equal(_cpu_copy(actual), expected):
                 raise RuntimeError(f"Gradient capture modified the accumulated optimizer gradient for {name}")
 
-    def capture_microbatch(self, loss: Tensor, sequence_losses: list[Tensor], micro_batch: "TensorMicroBatch") -> None:
+    def _record_gradients(self, trace_id: str, gradients: dict[str, Tensor | None], complete: bool) -> None:
+        if complete and trace_id not in self.partial_gradients:
+            self.statistics.update(gradients)
+            return
+
+        if trace_id not in self.partial_gradients:
+            self.partial_gradients[trace_id] = dict.fromkeys(gradients)
+        partial = self.partial_gradients[trace_id]
+        for name, gradient in gradients.items():
+            if gradient is None:
+                continue
+            value = gradient.detach().to(
+                device=self.config.statistics_device, dtype=torch.float32, copy=partial[name] is None
+            )
+            if partial[name] is None:
+                partial[name] = value
+            else:
+                partial[name].add_(value)
+        if complete:
+            self.statistics.update(self.partial_gradients.pop(trace_id))
+
+    def capture_microbatch(self, loss: Tensor, sequence_losses: list[Tensor]) -> None:
         params = self._compute_parameters()
-        lengths = micro_batch["sequence_lengths"]
-        trace_ids = micro_batch.get("trace_ids") or [""] * len(lengths)
-        if not (len(sequence_losses) == len(trace_ids) == len(lengths)):
-            raise ValueError("Sequence losses and rollout metadata must align with sequence_lengths")
-        active = micro_batch["loss_mask"].flatten().clone()
-        for key in ("ce_weights", "ref_kl_weights"):
-            if micro_batch[key] is not None:
-                active |= micro_batch[key].flatten() != 0
-        active_sequences = active.split(lengths)
+        rollout_losses: dict[str, Tensor] = {}
+        for trace_id, branch_loss in zip(self.trace_ids[self.micro_step], sequence_losses, strict=True):
+            if trace_id in rollout_losses:
+                rollout_losses[trace_id] = rollout_losses[trace_id] + branch_loss
+            elif trace_id:
+                rollout_losses[trace_id] = branch_loss
         if self.config.verify:
             torch.testing.assert_close(torch.stack(sequence_losses).sum(), loss, rtol=1e-5, atol=1e-6)
         previous_gradients = self._optimizer_gradients() if self.config.verify else None
@@ -100,20 +143,17 @@ class RolloutGradientCapture:
             self.model.set_requires_gradient_sync(False)
             self.model.set_reshard_after_backward(False)
         try:
-            for sequence_loss, trace_id, active_sequence in zip(
-                sequence_losses, trace_ids, active_sequences, strict=True
-            ):
-                if not trace_id and not bool(active_sequence.any()):
-                    continue
+            for trace_id, rollout_loss in rollout_losses.items():
                 grads = torch.autograd.grad(
-                    sequence_loss, tuple(params.values()), retain_graph=True, create_graph=False, allow_unused=True
+                    rollout_loss, tuple(params.values()), retain_graph=True, create_graph=False, allow_unused=True
                 )
                 if all(grad is None for grad in grads):
                     raise RuntimeError("Rollout loss is disconnected from all computation parameters")
                 for name, param in params.items():
                     if isinstance(self.model, FSDPModule) and param.grad is not None:
                         raise RuntimeError(f"autograd.grad populated the computation gradient buffer for {name}")
-                self.statistics.update(dict(zip(params, grads, strict=True)))
+                complete = self.last_microbatch[trace_id] == self.micro_step
+                self._record_gradients(trace_id, dict(zip(params, grads, strict=True)), complete)
                 if previous_gradients is not None:
                     self._assert_unchanged(previous_gradients)
                 del grads
@@ -124,6 +164,7 @@ class RolloutGradientCapture:
                 self.model.set_is_last_backward(True)
                 for module, reshard in self.reshard_policies:
                     module.set_reshard_after_forward(reshard, recurse=False)
+        self.micro_step += 1
 
     def _verify_batch_gradient(self) -> None:
         for name, param in self.optimizer_params.items():
@@ -148,6 +189,12 @@ class RolloutGradientCapture:
                 )
 
     def finish_step(self) -> dict[str, float | int]:
+        if (
+            self.micro_step != len(self.trace_ids)
+            or self.partial_gradients
+            or self.statistics.count != len(self.last_microbatch)
+        ):
+            raise RuntimeError("Gradient capture did not complete every expected rollout")
         if self.config.verify:
             self._verify_batch_gradient()
         return self.statistics.finalize()

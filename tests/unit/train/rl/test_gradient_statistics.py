@@ -35,8 +35,8 @@ def test_gradient_statistics_match_stacked_reference_with_unused_parameters(stat
         )
 
     assert statistics.count == 3
-    torch.testing.assert_close(statistics.gradient_sum["weight"].cpu(), stacked[:, :2].sum(dim=0))
-    torch.testing.assert_close(statistics.gradient_sum["bias"].cpu(), stacked[:, 2:].sum(dim=0))
+    torch.testing.assert_close(statistics.gradient_sum["weight"].cpu(), stacked[:, :2].sum(dim=0).float())
+    torch.testing.assert_close(statistics.gradient_sum["bias"].cpu(), stacked[:, 2:].sum(dim=0).float())
     assert statistics.gradient_sum["unused"] is None
     assert float(statistics.squared_norm_sum) == pytest.approx(stacked.square().sum().item())
     mean = stacked.mean(dim=0)
@@ -71,13 +71,18 @@ def test_identical_rollout_gradients_have_zero_variance_and_no_snr(gradient, sta
     assert "snr/value" not in metrics
 
 
-def test_nearly_identical_rollout_gradients_retain_small_variance(statistics, statistics_device):
-    samples = torch.tensor([[1.0, -2.0], [1.0001, -2.0001], [0.9999, -1.9999]], dtype=torch.float32)
+@pytest.mark.parametrize("delta,below_roundoff", [(1 / 128, False), (0.0001, True)])
+def test_nearly_identical_rollout_gradients(statistics, statistics_device, delta, below_roundoff):
+    samples = torch.tensor([[1.0, -2.0], [1 + delta, -2 - delta], [1 - delta, -2 + delta]], dtype=torch.float32)
     for sample in samples:
         statistics.update({"weight": sample.to(statistics_device)})
     mean = samples.double().mean(dim=0)
     variance = (samples.double() - mean).square().sum().item() / (len(samples) - 1)
     metrics = statistics.finalize()
+    if below_roundoff:
+        assert metrics["snr/variance"] == 0.0
+        assert "snr/value" not in metrics
+        return
     assert metrics["snr/variance"] > 0.0
     assert metrics["snr/variance"] == pytest.approx(variance, rel=1e-6, abs=0)
     assert metrics["snr/value"] == pytest.approx(mean.square().sum().item() / variance, rel=1e-6)
@@ -91,7 +96,7 @@ def test_gradient_statistics_retain_only_the_sum_and_release_it_after_finalizati
     first_reference = weakref.ref(first_gradient)
     statistics.update({"weight": first_gradient, "bias": torch.tensor([0.5], device=statistics_device)})
     first_gradient.detach().zero_()
-    torch.testing.assert_close(statistics.gradient_sum["weight"].cpu(), torch.tensor([1.0, 2.0], dtype=torch.float64))
+    torch.testing.assert_close(statistics.gradient_sum["weight"].cpu(), torch.tensor([1.0, 2.0]))
     del first_gradient
     assert first_reference() is None
     for index in range(100):
@@ -104,7 +109,7 @@ def test_gradient_statistics_retain_only_the_sum_and_release_it_after_finalizati
         assert set(statistics.gradient_sum) == {"weight", "bias"}
         assert sum(value.numel() for value in statistics.gradient_sum.values()) == 3
         for value in statistics.gradient_sum.values():
-            assert value.device.type == statistics_device.type and value.dtype == torch.float64
+            assert value.device.type == statistics_device.type and value.dtype == torch.float32
             assert not value.requires_grad and value.grad_fn is None
     metrics = statistics.finalize()
     assert metrics["snr/count"] == 101
@@ -117,10 +122,6 @@ def test_gradient_statistics_retain_only_the_sum_and_release_it_after_finalizati
 
 def test_capture_counts_masked_real_rollouts_but_skips_padding(statistics_device):
     model = nn.Linear(2, 1, bias=False).to(statistics_device)
-    capture = RolloutGradientCapture(
-        model, GradientCaptureConfig(steps=[1], verify=True, statistics_device=statistics_device.type)
-    )
-    capture.before_forward()
     logprobs = model(torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], device=statistics_device)).flatten()
     mask = torch.tensor([[True, False, False]], device=statistics_device)
     sequence_losses = []
@@ -147,7 +148,10 @@ def test_capture_counts_masked_real_rollouts_but_skips_padding(statistics_device
         "ce_weights": None,
         "ref_kl_weights": None,
     }
-    capture.capture_microbatch(loss, sequence_losses, batch)
+    capture = RolloutGradientCapture(
+        model, GradientCaptureConfig(steps=[1], verify=True, statistics_device=statistics_device.type), [batch]
+    )
+    capture.capture_microbatch(loss, sequence_losses)
     assert capture.statistics.count == 2
     assert model.weight.grad is None
     loss.backward()
@@ -156,6 +160,38 @@ def test_capture_counts_masked_real_rollouts_but_skips_padding(statistics_device
     assert metrics["snr/variance"] > 0.0
     assert metrics["snr/value"] == pytest.approx(0.5)
     assert capture.statistics.gradient_sum == {}
+
+
+def test_capture_sums_packed_and_split_branches(statistics_device):
+    model = nn.Linear(2, 1, bias=False).to(statistics_device)
+    batches = [
+        {"sequence_lengths": [1, 1, 1], "trace_ids": ["packed", "split", "packed"]},
+        {"sequence_lengths": [1, 1], "trace_ids": ["single", "split"]},
+    ]
+    capture = RolloutGradientCapture(
+        model, GradientCaptureConfig(steps=[1], statistics_device=statistics_device.type), batches
+    )
+    features = [[[1, 2], [3, 4], [-1, -2]], [[2, 1], [1, -1]]]
+    for index, rows in enumerate(features):
+        capture.before_forward()
+        outputs = model(torch.tensor(rows, device=statistics_device, dtype=torch.float32)).flatten()
+        loss = outputs.sum()
+        capture.capture_microbatch(loss, list(outputs.unbind()))
+        if index == 0:
+            assert capture.statistics.count == 1
+            assert capture.partial_gradients.keys() == {"split"}
+            assert capture.partial_gradients["split"]["weight"].dtype == torch.float32
+            with pytest.raises(RuntimeError, match="complete every expected rollout"):
+                capture.finish_step()
+        loss.backward()
+
+    reference = torch.tensor([[0, 0], [4, 3], [2, 1]], dtype=torch.float64)
+    assert not capture.partial_gradients
+    assert float(capture.statistics.squared_norm_sum) == pytest.approx(reference.square().sum().item())
+    torch.testing.assert_close(model.weight.grad.cpu().flatten(), reference.sum(dim=0).float())
+    metrics = capture.finish_step()
+    assert metrics["snr/count"] == len(reference)
+    assert metrics["snr/variance"] == pytest.approx(reference.var(dim=0).sum().item())
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), 1e308])

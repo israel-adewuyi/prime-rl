@@ -175,25 +175,19 @@ def test_lfm2_fsdp_capture_preserves_training(lfm2_process_group, tmp_path):
     baseline_optim = torch.optim.AdamW(baseline_params.values(), lr=trainer.optim.lr, weight_decay=0.0)
     captured_optim = torch.optim.AdamW(captured_params.values(), lr=trainer.optim.lr, weight_decay=0.0)
 
+    positions = torch.cat([torch.arange(5), torch.arange(7)]).unsqueeze(0).cuda()
+    batches = [
+        {"sequence_lengths": [5, 7], "trace_ids": [f"a-{micro}", f"b-{micro}"], "loss_mask": positions > 0}
+        for micro in range(2)
+    ]
     for step in range(1, trainer.max_steps + 1):
         capture = None
         if step in trainer.gradient_capture.steps:
-            capture = RolloutGradientCapture(captured, trainer.gradient_capture)
-        for micro in range(2):
+            capture = RolloutGradientCapture(captured, trainer.gradient_capture, batches)
+        for micro, batch in enumerate(batches):
             generator = torch.Generator().manual_seed(step * 100 + micro)
             tokens = torch.randint(1, 128, (1, 12), generator=generator).cuda()
             lengths = torch.tensor([5, 7], device="cuda")
-            positions = torch.cat([torch.arange(5), torch.arange(7)]).unsqueeze(0).cuda()
-            batch = {
-                "sequence_lengths": [5, 7],
-                "trace_ids": [f"a-{micro}", f"b-{micro}"],
-                "branch_indices": [0, 0],
-                "env_names": ["lfm2-test"] * 12,
-                "loss_mask": positions > 0,
-                "rl_weights": None,
-                "ce_weights": None,
-                "ref_kl_weights": None,
-            }
             advantages = torch.cat([torch.ones(5), -torch.ones(7)]).cuda()
             for model in (baseline, captured):
                 if model is captured and capture is not None:
@@ -225,7 +219,7 @@ def test_lfm2_fsdp_capture_preserves_training(lfm2_process_group, tmp_path):
                     per_sequence_losses=sequence_losses,
                 )
                 if model is captured and capture is not None:
-                    capture.capture_microbatch(loss, sequence_losses, batch)
+                    capture.capture_microbatch(loss, sequence_losses)
                 loss.backward()
             for name, param in captured_params.items():
                 assert param.grad is not None and torch.isfinite(param.grad.to_local()).all(), name

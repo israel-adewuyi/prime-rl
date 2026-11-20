@@ -250,6 +250,7 @@ def test_two_step_capture_matches_training_without_capture(
             capture = RolloutGradientCapture(
                 model=captured,
                 config=trainer_config.gradient_capture,
+                micro_batches=[batch for _, batch in batches],
                 reshard_after_forward=reshard_after_forward,
             )
         for features, batch in batches:
@@ -261,7 +262,7 @@ def test_two_step_capture_matches_training_without_capture(
                 assert _reshard_policies(captured) == dict.fromkeys(expected_policies, (False,))
             captured_loss, sequence_losses = _loss(captured, features, batch, trainer_config)
             if capture is not None:
-                capture.capture_microbatch(captured_loss, sequence_losses, batch)
+                capture.capture_microbatch(captured_loss, sequence_losses)
                 _assert_gradients_equal(_gradient_snapshot(captured_parameters), before)
             assert _reshard_policies(captured) == expected_policies
             captured_loss.backward()
@@ -270,13 +271,16 @@ def test_two_step_capture_matches_training_without_capture(
         if capture is not None:
             assert capture.statistics.count == 6
             actual_sum = torch.cat([capture.statistics.gradient_sum[name].flatten() for name in captured_parameters])
-            torch.testing.assert_close(actual_sum, expected_rollout_gradients.sum(dim=0), rtol=0, atol=0)
+            expected_sum = torch.zeros_like(actual_sum)
+            for gradient in expected_rollout_gradients.float():
+                expected_sum.add_(gradient)
+            torch.testing.assert_close(actual_sum, expected_sum, rtol=0, atol=0)
             assert capture.statistics.squared_norm_sum == pytest.approx(
                 expected_rollout_gradients.square().sum().item()
             )
             metrics = capture.finish_step()
-            mean = expected_rollout_gradients.mean(dim=0)
-            variance = ((expected_rollout_gradients - mean).square().sum() / 5).item()
+            mean = expected_sum.double() / 6
+            variance = ((expected_rollout_gradients.square().sum() - 6 * mean.square().sum()) / 5).item()
             assert metrics["snr/count"] == 6
             assert metrics["snr/mean_norm"] == pytest.approx(mean.norm().item(), rel=1e-10)
             assert metrics["snr/variance"] == pytest.approx(variance, rel=1e-10)

@@ -78,7 +78,8 @@ optimizer update. Unused gradients are represented by `None`. No individual
 rollout gradient files are saved. For 230M trainable parameters in FP32,
 the two tensor collections total roughly 1.84 GB per checkpoint, in addition
 to the normal model and optimizer checkpoint. The statistics accumulator
-also holds one CPU FP64 gradient sum, approximately 1.84 GB at this size.
+also holds an FP32 gradient sum, approximately 0.92 GB at this size, and
+temporary FP32 buffers for unfinished rollouts that span microbatches.
 
 GRPO sequences with zero advantages are filtered before reaching the trainer.
 Groups with equal rollout rewards provide no training data; generation must

@@ -14,7 +14,7 @@ From the repository root, using the installed environment:
 uv run --no-sync python benchmarks/snr/run.py outputs/snr/initial.json
 ```
 
-The defaults are 1,000,000 elements in one tensor, FP32 input, FP64 accumulation,
+The defaults are 1,000,000 elements in one tensor, FP32 input and gradient sum, FP64 scalar moments,
 64 rollouts, a pool of four gradients, two warmups, and ten measured repetitions
 for each of the CPU and CUDA implementations. Both implementations receive the
 same inputs on GPU, so the CPU measurements include device-to-host transfers.
@@ -65,8 +65,8 @@ Results contain raw timings, median/mean/standard deviation, peak allocated
 GPU memory, additional peak allocation above the input-pool baseline, and
 per-repetition peak reserved memory. Reserved memory includes PyTorch's cache
 from earlier verification/warmups/implementations; additional peak **allocated**
-memory is the useful measure of accumulator overhead. The retained FP64 sum
-costs eight bytes per parameter, plus per-parameter conversion temporaries.
+memory is the useful measure of accumulator overhead. The retained FP32 sum
+costs four bytes per parameter, plus per-parameter conversion temporaries.
 
 The input pool is generated once on CPU with a fixed seed, transferred before
 verification, and cycled through without modification. Its memory is bounded
@@ -127,6 +127,5 @@ statistics_device = "cuda"
 verify = false
 ```
 
-`statistics_device` defaults to `"cpu"`. CUDA accumulation preserves the FP64
-statistics and per-rollout gradient extraction; it changes where statistics
-are computed. The benchmark does not measure the cost of gradient extraction.
+`statistics_device` defaults to `"cpu"`. Both devices use FP32 gradient
+buffers and FP64 scalar moments. The benchmark times accumulation only.

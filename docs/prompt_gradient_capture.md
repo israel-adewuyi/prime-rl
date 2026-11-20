@@ -24,16 +24,14 @@ entering the first update.
 
 ## Statistics
 
-Each prepared rollout sequence contributes a differentiable scalar containing
-the complete training objective with exactly the training batch's
-normalization. `torch.autograd.grad` computes its parameter gradient before
-normal backward, clipping, and the optimizer update. The existing microbatch
-schedule is retained. Sequences are not regrouped by prompt: in the single-turn
-workflow used here, each sequence is one rollout. There is no extra division
-of each rollout loss by rollout count.
+Each distinct `trace_id` contributes one rollout gradient. Within a microbatch,
+the trainer sums that trace's branch losses using the training batch's loss
+normalization, then calls `torch.autograd.grad` once. When a trace spans
+microbatches, the trainer adds its partial gradients and releases the buffer
+after its last branch. The ordinary training backward follows each microbatch.
 
-At each selected update, the trainer accumulates an FP64 gradient sum `S`,
-the sum of squared gradient norms `Q`, and the rollout count `n`.
+At each selected update, the trainer accumulates an FP32 gradient sum `S`,
+an FP64 sum of squared rollout gradient norms `Q`, and the rollout count `n`.
 `statistics_device = "cpu"` (the default) keeps the accumulator on CPU.
 `statistics_device = "cuda"` keeps both sums on the gradients' GPU and transfers
 only two scalar moments at finalization, avoiding per-rollout CPU copies.
@@ -55,20 +53,19 @@ V = (Q - ||S||^2 / n) / (n - 1)
 | `snr/value` | Power SNR, `||mu||^2 / V`. |
 
 Variance is undefined for fewer than two rollouts and is omitted. Values
-within the FP64 roundoff bound are treated as zero. The ratio
+within the roundoff bound for the FP32 gradient sum are treated as zero. The ratio
 is omitted when variance is undefined or zero. These statistics reset for
 each selected update; they are not averages across training updates. Real
-sequences with trace identity count even when their gradient is zero.
-Synthetic padding sequences with no trace identity and no active loss do not.
+traces count even when their gradient is zero. The trainer skips anonymous
+padding and requires a trace ID for every sequence with active loss.
 
 Scalars go to the ordinary trainer monitors. With the default file monitor,
 read `monitors/file/metrics.jsonl` beneath the run directory: trainer rows
 have `"producer": "trainer"`, an integer `step`, and flat `snr/...` keys.
 An enabled W&B monitor receives the same metrics. Individual rollout gradient
-files are not written; the running accumulation uses memory proportional to
-one model gradient, rather than the number of rollouts. The FP64 sum for
-230M parameters takes approximately 1.84 GB on the selected statistics device,
-with additional temporary memory for per-parameter FP64 conversion.
+files are not written. The FP32 sum for 230M parameters takes approximately
+0.92 GB on the selected statistics device. Each unfinished trace spanning
+microbatches also holds an FP32 buffer for the parameters it has used.
 
 The [standalone SNR benchmark](../benchmarks/snr/README.md) compares CPU and GPU
 accumulation on precomputed gradients. It verifies results before timing;
@@ -126,8 +123,8 @@ Capture uses the existing FSDP wrapper on one trainer GPU with `cp = 1`,
 activation offload, FSDP CPU offload, optimizer-in-backward offload,
 quantization, and multimodal training are unsupported with capture enabled.
 The optimization and reduction dtype settings retain their usual defaults.
-FP64 accumulation does not recover precision lost in BF16 computation.
-Separate backward traversals can introduce small floating-point differences.
+Grouping branch losses before differentiation can change rounding in BF16
+compared with adding gradients from separate backward traversals.
 
 The LFM2 adapter resets attention and convolution history at packed-sequence
 boundaries, uses stateless PyTorch convolution, disables inference caches, and
