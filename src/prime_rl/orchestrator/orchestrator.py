@@ -60,6 +60,7 @@ from prime_rl.orchestrator.types import (
     TrainBatch,
 )
 from prime_rl.orchestrator.utils import (
+    episode_env_name,
     episode_group_id,
     episode_staleness,
     eval_work,
@@ -670,6 +671,9 @@ class Orchestrator:
             "progress/output_tokens": num_output,
             "progress/rollouts": num_rollouts,
             "progress/tasks": num_unique_examples,
+            "progress/effective_unique_prompts": len(
+                {(episode_env_name(record.episode), record.trace.task.data.idx) for record in effective.records}
+            ),
             "progress/total_tokens": self.progress.total_tokens,
             "progress/total_rollouts": self.progress.total_samples,
             "progress/total_tasks": self.progress.total_problems,

@@ -1,0 +1,49 @@
+# The final capacity probe runs only after the benchmark releases its GPU.
+
+[trials.alphabet-p16-r16]
+batch_size = 256
+rollouts_per_prompt = 16
+episode_cap = 256
+admission_burst = 256
+
+[trials.alphabet-p16-r32]
+batch_size = 512
+rollouts_per_prompt = 32
+episode_cap = 512
+admission_burst = 256
+
+[trials.alphabet-p32-r16]
+batch_size = 512
+rollouts_per_prompt = 16
+episode_cap = 512
+admission_burst = 256
+
+[trials.alphabet-p64-r8]
+batch_size = 512
+rollouts_per_prompt = 8
+episode_cap = 512
+admission_burst = 256
+
+[trials.alphabet-p16-r64]
+batch_size = 1024
+rollouts_per_prompt = 64
+episode_cap = 1024
+admission_burst = 512
+
+[trials.alphabet-p32-r32]
+batch_size = 1024
+rollouts_per_prompt = 32
+episode_cap = 1024
+admission_burst = 512
+
+[trials.alphabet-p64-r16]
+batch_size = 1024
+rollouts_per_prompt = 16
+episode_cap = 1024
+admission_burst = 512
+
+[trials.alphabet-p32-r16-burst512]
+batch_size = 512
+rollouts_per_prompt = 16
+episode_cap = 512
+admission_burst = 512

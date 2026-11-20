@@ -1,0 +1,103 @@
+# Qwen/Qwen2.5-0.5B-Instruct, pinned cached revision.
+dashboard = false
+max_steps = 150
+
+[run]
+name = "alphabet-p32-r16"
+[model]
+name = "/mnt/shared/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775"
+[env_vars]
+FLASH_ATTENTION_TRITON_AMD_ENABLE = "FALSE"
+[weight_broadcast]
+type = "filesystem"
+[rollout_transport]
+type = "zmq"
+port = 21600
+[trainer]
+matmul_precision = "highest"
+[trainer.model]
+seq_len = 16384
+attn = "flash_attention_2"
+compile = "None"
+ac = "None"
+ac_offloading = "None"
+optim_cpu_offload = false
+cp = 1
+ep = 1
+fused_lm_head_token_chunk_size = 8192
+[trainer.model.fusions]
+enabled = []
+[trainer.optim]
+type = "adamw"
+lr = 1e-6
+weight_decay = 0.0
+max_norm = 1.0
+betas1 = 0.9
+betas2 = 0.999
+[trainer.scheduler]
+type = "constant"
+[trainer.loss]
+type = "ppo"
+ratio_low = 0.8
+ratio_high = 1.2
+max_importance_ratio = 10000.0
+adv_tau = 1.0
+[trainer.gradient_capture]
+steps = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150]
+statistics_device = "cuda"
+verify = false
+[orchestrator]
+batch_size = 512
+seq_len = 16384
+max_off_policy_steps = 8
+[orchestrator.model.client]
+base_url = "http://127.0.0.1:4600/v1"
+admin_base_url = ["http://127.0.0.1:4601/v1"]
+[orchestrator.concurrency]
+initial_inflight = 512
+min_inflight = 512
+max_inflight = 512
+admission_burst = 256
+[orchestrator.renderer]
+name = "default"
+[orchestrator.train]
+group_size = 16
+[orchestrator.train.algo]
+type = "grpo"
+[orchestrator.train.select]
+exclude.idx = ["0:64"]
+[orchestrator.train.sampling]
+temperature = 0.8
+top_p = 1.0
+max_completion_tokens = 128
+[[orchestrator.train.source]]
+name = "alphabet-sort"
+env.taskset.id = "alphabet-sort"
+env.taskset.min_turns = 2
+env.taskset.max_turns = 2
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+[orchestrator.eval]
+interval = 10
+skip_first_step = false
+group_size = 1
+[orchestrator.eval.select]
+include.idx = ["0:64"]
+[orchestrator.eval.sampling]
+temperature = 0.0
+max_completion_tokens = 128
+[[orchestrator.eval.source]]
+name = "alphabet-sort-heldout"
+env.taskset.id = "alphabet-sort"
+env.taskset.min_turns = 2
+env.taskset.max_turns = 2
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+[monitors.file]
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 0
+
+# External inference uses inference.toml on the same physical GPU as the trainer.
+# No [ckpt] block: checkpoints are disabled, matching exp6.
+# Optimization/reduction dtypes retain their existing FP32 defaults.
