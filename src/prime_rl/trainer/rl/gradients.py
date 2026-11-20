@@ -59,6 +59,7 @@ class RolloutGradientCapture:
             trace_id: index for index, ids in enumerate(self.trace_ids) for trace_id in ids if trace_id
         }
         self.partial_gradients: dict[str, dict[str, Tensor | None]] = {}
+        self.peak_partial_traces = 0
         self.reshard_policies: list[tuple[FSDPModule, bool]] = []
         seen_states = set()
         for module in model.modules():
@@ -110,21 +111,27 @@ class RolloutGradientCapture:
             self.statistics.update(gradients)
             return
 
-        if trace_id not in self.partial_gradients:
-            self.partial_gradients[trace_id] = dict.fromkeys(gradients)
-        partial = self.partial_gradients[trace_id]
+        # A packed update can leave hundreds of rollouts unfinished. Keep their
+        # FP32 sums on the host, moving only the completing rollout to the
+        # statistics device. Single-microbatch rollouts take the fast path above.
+        partial = self.partial_gradients.pop(trace_id, None)
+        if partial is None:
+            partial = dict.fromkeys(gradients)
+        device = self.config.statistics_device if complete else "cpu"
         for name, gradient in gradients.items():
-            if gradient is None:
-                continue
-            value = gradient.detach().to(
-                device=self.config.statistics_device, dtype=torch.float32, copy=partial[name] is None
-            )
-            if partial[name] is None:
-                partial[name] = value
-            else:
-                partial[name].add_(value)
+            previous = partial[name]
+            if previous is not None:
+                previous = previous.to(device)
+                if gradient is not None:
+                    previous.add_(gradient.detach().to(device=device, dtype=torch.float32))
+                partial[name] = previous
+            elif gradient is not None:
+                partial[name] = gradient.detach().to(device=device, dtype=torch.float32, copy=True)
         if complete:
-            self.statistics.update(self.partial_gradients.pop(trace_id))
+            self.statistics.update(partial)
+        else:
+            self.partial_gradients[trace_id] = partial
+            self.peak_partial_traces = max(self.peak_partial_traces, len(self.partial_gradients))
 
     def capture_microbatch(self, loss: Tensor, sequence_losses: list[Tensor]) -> None:
         params = self._compute_parameters()
@@ -197,4 +204,4 @@ class RolloutGradientCapture:
             raise RuntimeError("Gradient capture did not complete every expected rollout")
         if self.config.verify:
             self._verify_batch_gradient()
-        return self.statistics.finalize()
+        return {**self.statistics.finalize(), "snr/peak_partial_traces": self.peak_partial_traces}

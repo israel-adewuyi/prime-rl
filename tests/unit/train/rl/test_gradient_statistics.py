@@ -180,6 +180,7 @@ def test_capture_sums_packed_and_split_branches(statistics_device):
         if index == 0:
             assert capture.statistics.count == 1
             assert capture.partial_gradients.keys() == {"split"}
+            assert capture.partial_gradients["split"]["weight"].device.type == "cpu"
             assert capture.partial_gradients["split"]["weight"].dtype == torch.float32
             with pytest.raises(RuntimeError, match="complete every expected rollout"):
                 capture.finish_step()
@@ -190,6 +191,7 @@ def test_capture_sums_packed_and_split_branches(statistics_device):
     assert float(capture.statistics.squared_norm_sum) == pytest.approx(reference.square().sum().item())
     torch.testing.assert_close(model.weight.grad.cpu().flatten(), reference.sum(dim=0).float())
     metrics = capture.finish_step()
+    assert metrics["snr/peak_partial_traces"] == 1
     assert metrics["snr/count"] == len(reference)
     assert metrics["snr/variance"] == pytest.approx(reference.var(dim=0).sum().item())
 

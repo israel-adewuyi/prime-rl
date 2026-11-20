@@ -34,7 +34,7 @@ At each selected update, the trainer accumulates an FP32 gradient sum `S`,
 an FP64 sum of squared rollout gradient norms `Q`, and the rollout count `n`.
 `statistics_device = "cpu"` (the default) keeps the accumulator on CPU.
 `statistics_device = "cuda"` keeps both sums on the gradients' GPU and transfers
-only two scalar moments at finalization, avoiding per-rollout CPU copies.
+two scalar moments at finalization. Rollouts confined to one microbatch stay on the GPU.
 CUDA accumulation checks for nonfinite moments at finalization, before the
 optimizer update. It reports:
 
@@ -64,8 +64,8 @@ read `monitors/file/metrics.jsonl` beneath the run directory: trainer rows
 have `"producer": "trainer"`, an integer `step`, and flat `snr/...` keys.
 An enabled W&B monitor receives the same metrics. Individual rollout gradient
 files are not written. The FP32 sum for 230M parameters takes approximately
-0.92 GB on the selected statistics device. Each unfinished trace spanning
-microbatches also holds an FP32 buffer for the parameters it has used.
+0.92 GB on the selected statistics device. Each unfinished trace spanning microbatches holds its FP32 partial gradient on the CPU until its final contribution arrives.
+`snr/peak_partial_traces` counts the most such buffers open simultaneously during this capture.
 
 The [standalone SNR benchmark](../benchmarks/snr/README.md) compares CPU and GPU
 accumulation on precomputed gradients. It verifies results before timing;

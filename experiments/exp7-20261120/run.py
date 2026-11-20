@@ -16,6 +16,7 @@ def main():
     parser.add_argument("condition", choices=trials)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--gpu", required=True, help="Physical GPU shared by inference and trainer")
+    parser.add_argument("--retry", action="store_true", help="Use a distinct run directory for a restarted condition")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if not args.gpu.isdigit():
@@ -37,7 +38,8 @@ def main():
     # Port offsets separate all concurrent listeners, including router metrics.
     slot = int(args.gpu)
     port = 4600 + 50 * slot
-    rl_raw["run"]["name"] = condition
+    run_name = f"{condition}-retry" if args.retry else condition
+    rl_raw["run"]["name"] = run_name
     orch = rl_raw["orchestrator"]
     orch["batch_size"] = trial["batch_size"]
     orch["train"]["group_size"] = trial["rollouts_per_prompt"]
@@ -51,7 +53,7 @@ def main():
     inference_raw["vllm"].update(max_num_seqs=cap, data_parallel_rpc_port=18600 + 50 * slot)
     os.environ["NCCL_RAS_ADDR"] = f"127.0.0.1:{27500 + slot}"
     rl_raw.update(output_dir=str(args.output_dir.resolve()), dry_run=args.dry_run)
-    launch_dir = args.output_dir.resolve() / ".launch" / condition
+    launch_dir = args.output_dir.resolve() / ".launch" / run_name
     launch_dir.mkdir(parents=True, exist_ok=False)
     inference_raw.update(output_dir=str(launch_dir / "inference"), dry_run=args.dry_run)
     config = RLConfig.model_validate(rl_raw)
