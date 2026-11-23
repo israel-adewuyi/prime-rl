@@ -195,7 +195,7 @@ class RolloutGradientCapture:
                     f"Rollout gradients do not reconstruct {name}: error_l2={error_norm}, tolerance_l2={tolerance}"
                 )
 
-    def finish_step(self) -> dict[str, float | int]:
+    def finish_step(self, *, scored_count: int | None = None) -> dict[str, float | int]:
         if (
             self.micro_step != len(self.trace_ids)
             or self.partial_gradients
@@ -204,4 +204,7 @@ class RolloutGradientCapture:
             raise RuntimeError("Gradient capture did not complete every expected rollout")
         if self.config.verify:
             self._verify_batch_gradient()
-        return {**self.statistics.finalize(), "snr/peak_partial_traces": self.peak_partial_traces}
+        return {
+            **self.statistics.finalize(scored_count=scored_count),
+            "snr/peak_partial_traces": self.peak_partial_traces,
+        }

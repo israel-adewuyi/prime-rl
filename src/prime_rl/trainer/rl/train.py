@@ -1,6 +1,7 @@
 import prime_rl._compat  # noqa: F401 — patch ring_flash_attn compat before import
 
 from contextlib import nullcontext
+from collections.abc import Iterator
 import time
 import asyncio
 from datetime import timedelta
@@ -17,7 +18,7 @@ from prime_rl.trainer.ckpt import Progress, setup_ckpt_manager
 from prime_rl.trainer.optim import setup_optimizer
 from prime_rl.trainer.scheduler import setup_scheduler
 from prime_rl.configs.trainer import TrainerConfig
-from prime_rl.trainer.rl.data import DataLoader, FakeDataLoader
+from prime_rl.trainer.rl.data import DataLoader, FakeDataLoader, FixedPolicyBatch
 from prime_rl.utils.cp import (
     gather_for_cp,
     gather_for_cp_wo_grad,
@@ -78,7 +79,7 @@ from prime_rl.utils.utils import clean_exit
 
 
 @clean_exit
-def train(config: TrainerConfig):
+def train(config: TrainerConfig, *, fixed_batches: Iterator[FixedPolicyBatch] | None = None):
     # Setup world and logger
     world = get_world()
     logger = setup_logger(
@@ -88,6 +89,11 @@ def train(config: TrainerConfig):
     logger.info(f"Starting RL trainer in {world} (output_dir={config.output_dir})")
     if config.gradient_capture is not None and world.world_size != 1:
         raise ValueError("gradient_capture requires exactly one trainer GPU")
+    if fixed_batches is not None:
+        if config.gradient_capture is None or config.ckpt or config.resume:
+            raise ValueError("Fixed-policy batches require gradient capture and a fresh, checkpoint-free trainer")
+        if config.model.optim_cpu_offload or config.model.full_offload is not None:
+            raise ValueError("Fixed-policy capture requires resident model gradients")
     if config.ckpt and config.ckpt.save_gradients_and_updates and world.world_size != 1:
         raise ValueError("ckpt.save_gradients_and_updates requires exactly one trainer GPU")
 
@@ -162,28 +168,29 @@ def train(config: TrainerConfig):
     rl_loss_fn = setup_rl_loss_fn(config.loss)
 
     # Set up the optimizer
-    logger.info(f"Initializing optimizer ({config.optim})")
-    t0 = time.perf_counter()
-    optimizer, gradient_manager = setup_optimizer(
-        config.optim,
-        list(model.named_parameters()),
-        parallel_dims,
-        cpu_offload=config.model.optim_cpu_offload,
-        full_offload_config=config.model.full_offload,
-        model=model,
-        full_offload_dtype_policy=(
-            get_full_offload_dtype_policy(model, config.model) if config.model.full_offload is not None else None
-        ),
-    )
-    logger.debug(f"Initialized optimizer in {format_time(time.perf_counter() - t0)}")
-
-    logger.info(f"Initializing scheduler ({config.scheduler})")
-    scheduler = setup_scheduler(optimizer, config.scheduler, config.max_steps, config.optim.lr)
+    optimizer = scheduler = gradient_manager = None
+    if fixed_batches is None:
+        logger.info(f"Initializing optimizer ({config.optim})")
+        t0 = time.perf_counter()
+        optimizer, gradient_manager = setup_optimizer(
+            config.optim,
+            list(model.named_parameters()),
+            parallel_dims,
+            cpu_offload=config.model.optim_cpu_offload,
+            full_offload_config=config.model.full_offload,
+            model=model,
+            full_offload_dtype_policy=(
+                get_full_offload_dtype_policy(model, config.model) if config.model.full_offload is not None else None
+            ),
+        )
+        logger.debug(f"Initialized optimizer in {format_time(time.perf_counter() - t0)}")
+        logger.info(f"Initializing scheduler ({config.scheduler})")
+        scheduler = setup_scheduler(optimizer, config.scheduler, config.max_steps, config.optim.lr)
 
     # Set up weight broadcast (skip when using fake data since there's no inference server)
-    if config.data.fake:
+    if config.data.fake or fixed_batches is not None:
         weight_sender = None
-        logger.info("Skipping weight broadcast setup (fake data mode)")
+        logger.info("Skipping weight broadcast setup")
     else:
         logger.info(f"Initializing weight broadcast ({config.weight_broadcast})")
         t0 = time.perf_counter()
@@ -230,7 +237,9 @@ def train(config: TrainerConfig):
     # Set up the data loader (Optionally, use a fake data loader for debugging)
     logger.info(f"Initializing data loader ({config.data})")
     t0 = time.perf_counter()
-    if config.data.fake:
+    if fixed_batches is not None:
+        dataloader = None
+    elif config.data.fake:
         dataloader = FakeDataLoader(config.data.fake, config.model.seq_len, parallel_dims.get_mesh("dp").size())
     else:
         dataloader = DataLoader(
@@ -257,6 +266,9 @@ def train(config: TrainerConfig):
     start_step = progress.step
     max_peak_memory = 0.0
     while True:
+        fixed = next(fixed_batches, None) if fixed_batches is not None else None
+        if fixed_batches is not None and fixed is None:
+            break
         # Reset peak memory stats
         torch.cuda.reset_peak_memory_stats()
         if gc_handler is not None:
@@ -288,14 +300,19 @@ def train(config: TrainerConfig):
         # Wait for the batch to be available
         logger.debug("Waiting for training batch to arrive")
         wait_for_batch_start_time = time.perf_counter()
-        dataloader.wait_for_batch()
+        if dataloader is not None:
+            dataloader.wait_for_batch()
         wait_for_batch_time = time.perf_counter() - wait_for_batch_start_time
         logger.debug(f"Waited for batch for {format_time(wait_for_batch_time)}")
 
         # Load the training batch
         logger.debug("Loading batch")
         load_data_start_time = time.perf_counter()
-        micro_batches = dataloader.get_batch()
+        if fixed is None:
+            micro_batches = dataloader.get_batch()
+        else:
+            logger.info(f"Capturing fixed policy | {fixed.name}")
+            micro_batches = fixed.micro_batches
         load_data_time = time.perf_counter() - load_data_start_time
         logger.debug(f"Loaded batch in {format_time(load_data_time)}")
 
@@ -305,7 +322,6 @@ def train(config: TrainerConfig):
             memory_profiler = MemoryProfiler(progress.step, config.memory_profiler_path)
 
         forward_backward_start_time = time.perf_counter()
-        seq_len = micro_batches[0]["input_ids"].shape[1]
 
         # Normalize each loss component by its own global (dp_cp) denominator, so every rank
         # divides by the same value. With a per-rank denominator, ranks with fewer loss
@@ -334,7 +350,7 @@ def train(config: TrainerConfig):
         dist.all_reduce(global_scales, op=dist.ReduceOp.SUM, group=dp_cp_group)
         rl_scale, ce_scale, ref_kl_scale = (scale if scale > 0 else 1 for scale in global_scales.tolist())
         gradient_capture = None
-        if config.gradient_capture is not None and progress.step in config.gradient_capture.steps:
+        if config.gradient_capture is not None and (fixed is not None or progress.step in config.gradient_capture.steps):
             gradient_capture = RolloutGradientCapture(
                 model,
                 config.gradient_capture,
@@ -533,6 +549,8 @@ def train(config: TrainerConfig):
                 loss.backward()
                 finish_backward(gradient_manager)
 
+            if fixed is not None:
+                continue
             mm_kwargs = None
 
             # Add relevant tensors to tensor dict for logging purposes
@@ -594,7 +612,8 @@ def train(config: TrainerConfig):
                 micro_step_message += f" | Mismatch KL {tensors['mismatch_kl/all'][-1].mean().item():.4f}"
             logger.debug(micro_step_message)
 
-        annotation_writer.flush()
+        if fixed is None:
+            annotation_writer.flush()
 
         # compute_loss already divided by the global token count. Undo FSDP's per-rank averaging
         # across dp_cp so the final gradient is the true per-token mean over the global batch.
@@ -602,6 +621,18 @@ def train(config: TrainerConfig):
             scale_gradients_(None, model, parallel_dims.fsdp_gradient_divide_factor)
 
         if gradient_capture is not None:
+            if fixed is not None:
+                gradient_metrics = gradient_capture.finish_step(scored_count=fixed.scored_count)
+                if gradient_metrics["snr/nonzero_advantage/count"] != fixed.nonzero_count:
+                    raise RuntimeError(f"{fixed.name}: packed gradient count differs from nonzero rollout count")
+                model.zero_grad(set_to_none=True)
+                peak_gib = torch.cuda.max_memory_allocated() / 1024**3
+                gradient_metrics["memory/trainer_peak_gib"] = peak_gib
+                max_peak_memory = max(max_peak_memory, peak_gib)
+                fixed.record(gradient_metrics)
+                logger.info(f"Completed {fixed.name} | {gradient_metrics}")
+                progress.step += 1
+                continue
             gradient_metrics = gradient_capture.finish_step()
             asyncio.run(monitors.log(gradient_metrics, step=progress.step))
             logger.info(f"Rollout gradient statistics at step {progress.step}: {gradient_metrics}")
@@ -677,6 +708,7 @@ def train(config: TrainerConfig):
             tensor_stats.update(get_expert_load_stats(step_tokens_per_expert, dp_cp_group))
 
         # Compute step metrics
+        seq_len = micro_batches[0]["input_ids"].shape[1]
         num_local_tokens = seq_len * batch_size
         num_tokens = parallel_dims.get_mesh("dp").size() * num_local_tokens
         progress.total_tokens += num_tokens

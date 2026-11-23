@@ -1,0 +1,50 @@
+[env_vars]
+FLASH_ATTENTION_TRITON_AMD_ENABLE = "FALSE"
+
+[trainer]
+matmul_precision = "highest"
+[trainer.model]
+seq_len = 16384
+attn = "flash_attention_2"
+compile = "None"
+ac = "None"
+ac_offloading = "None"
+cp = 1
+ep = 1
+optim_cpu_offload = false
+fused_lm_head_token_chunk_size = 8192
+[trainer.model.fusions]
+enabled = []
+[trainer.loss]
+type = "ppo"
+ratio_low = 0.8
+ratio_high = 1.2
+max_importance_ratio = 10000.0
+adv_tau = 1.0
+[trainer.gradient_capture]
+steps = [1]
+statistics_device = "cuda"
+verify = false
+
+[orchestrator]
+constant_trainer_batch_size = false
+seq_len = 16384
+num_train_workers = 1
+[orchestrator.renderer]
+name = "default"
+[orchestrator.train.select]
+# AlphabetSort is infinite. Bound the shuffle and skip the 64 held-out tasks.
+include.idx = ["64:1088"]
+shuffle = true
+[orchestrator.train.sampling]
+top_p = 1.0
+max_completion_tokens = 128
+[orchestrator.train.algo]
+type = "grpo"
+[[orchestrator.train.source]]
+name = "alphabet-sort"
+env.taskset.id = "alphabet-sort"
+env.taskset.min_turns = 2
+env.taskset.max_turns = 2
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"

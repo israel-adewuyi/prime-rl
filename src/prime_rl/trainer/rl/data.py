@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
@@ -172,6 +174,17 @@ class FakeDataLoader:
         }
 
 
+@dataclass
+class FixedPolicyBatch:
+    """One fully scored, RL-only cohort after zero-advantage filtering."""
+
+    name: str
+    scored_count: int
+    nonzero_count: int
+    micro_batches: list[TensorMicroBatch]
+    record: Callable[[dict[str, float | int]], None]
+
+
 class DataLoader:
     """Receives packed micro batches from the orchestrator, one stream per DP rank."""
 
@@ -194,9 +207,10 @@ class DataLoader:
 
     def get_batch(self) -> list[TensorMicroBatch]:
         micro_batches = self.receiver.receive()
-        return [self._micro_batch_to_tensor(mb) for mb in micro_batches]
+        return [self.micro_batch_to_tensor(mb) for mb in micro_batches]
 
-    def _micro_batch_to_tensor(self, micro_batch: MicroBatch) -> TensorMicroBatch:
+    @staticmethod
+    def micro_batch_to_tensor(micro_batch: MicroBatch) -> TensorMicroBatch:
         """Convert a MicroBatch (msgspec struct with lists) to a TensorMicroBatch (dict with tensors)."""
         routed_experts = None
         packed_routed_experts = micro_batch.routed_experts

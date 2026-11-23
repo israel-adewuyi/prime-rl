@@ -60,6 +60,28 @@ def test_gradient_statistics_omit_undefined_variance_for_zero_or_one_rollout(sta
     assert statistics.finalize() == {"snr/count": 1, "snr/mean_norm": 5.0}
 
 
+@pytest.mark.parametrize("nonzero_count", [0, 1, 2, 4])
+def test_scored_denominators_match_explicit_zero_vectors(statistics, statistics_device, nonzero_count):
+    scored_count = 4
+    gradients = torch.tensor([[3.0, 4.0], [-1.0, 2.0], [5.0, 3.0], [-3.0, 4.0]], dtype=torch.float64)
+    gradients[nonzero_count:] = 0
+    for gradient in gradients[:nonzero_count]:
+        statistics.update({"weight": gradient.to(statistics_device)})
+    metrics = statistics.finalize(scored_count=scored_count)
+    for subset, values in (("all_scored", gradients), ("nonzero_advantage", gradients[:nonzero_count])):
+        expected = {"count": len(values)}
+        if len(values):
+            expected["mean_norm"] = float(values.mean(dim=0).norm())
+        if len(values) > 1:
+            expected["variance"] = float(values.var(dim=0).sum())
+            if expected["variance"]:
+                expected["value"] = expected["mean_norm"] ** 2 / expected["variance"]
+        prefix = f"snr/{subset}/"
+        assert {k.removeprefix(prefix): v for k, v in metrics.items() if k.startswith(prefix)} == pytest.approx(
+            expected
+        )
+
+
 @pytest.mark.parametrize("gradient", [[1.25, -2.5], [0.0, 0.0]])
 def test_identical_rollout_gradients_have_zero_variance_and_no_snr(gradient, statistics, statistics_device):
     for _ in range(3):

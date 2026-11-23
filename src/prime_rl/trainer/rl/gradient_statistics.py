@@ -57,33 +57,40 @@ class GradientStatistics:
         )
         return self.squared_norm_sum, sum_squared_norm
 
-    def finalize(self) -> dict[str, float | int]:
-        metrics: dict[str, float | int] = {"snr/count": self.count}
-        if self.count:
-            squared_norm_sum, sum_squared_norm = self._moments()
+    @staticmethod
+    def _metrics(count: int, squared_norm_sum: float, sum_squared_norm: float, prefix: str) -> dict[str, float | int]:
+        metrics: dict[str, float | int] = {f"{prefix}/count": count}
+        if count:
             if not math.isfinite(squared_norm_sum):
                 raise ValueError("Non-finite sum of squared rollout-gradient norms")
             if not math.isfinite(sum_squared_norm):
                 raise ValueError("Non-finite norm of the accumulated rollout gradients")
-            mean_squared_norm = sum_squared_norm / self.count**2
-            metrics["snr/mean_norm"] = math.sqrt(mean_squared_norm)
-            if self.count > 1:
-                centered_sum = squared_norm_sum - sum_squared_norm / self.count
+            mean_squared_norm = sum_squared_norm / count**2
+            metrics[f"{prefix}/mean_norm"] = math.sqrt(mean_squared_norm)
+            if count > 1:
+                centered_sum = squared_norm_sum - sum_squared_norm / count
                 # Nearly identical gradients can lose precision in this subtraction.
-                roundoff = (
-                    8
-                    * self.count
-                    * torch.finfo(torch.float32).eps
-                    * max(squared_norm_sum, sum_squared_norm / self.count)
-                )
+                roundoff = 8 * count * torch.finfo(torch.float32).eps * max(squared_norm_sum, sum_squared_norm / count)
                 if centered_sum < -roundoff:
                     raise ValueError("Squared gradient norms produced a negative variance beyond roundoff")
                 if abs(centered_sum) <= roundoff:
                     centered_sum = 0.0
-                variance = centered_sum / (self.count - 1)
-                metrics["snr/variance"] = variance
+                variance = centered_sum / (count - 1)
+                metrics[f"{prefix}/variance"] = variance
                 if variance > 0:
-                    metrics["snr/value"] = mean_squared_norm / variance
+                    metrics[f"{prefix}/value"] = mean_squared_norm / variance
+        return metrics
+
+    def finalize(self, *, scored_count: int | None = None) -> dict[str, float | int]:
+        """When scored_count is given, filtered rollouts contribute zero vectors."""
+        if scored_count is not None and scored_count < self.count:
+            raise ValueError("Scored count is smaller than the captured rollout count")
+        moments = self._moments()
+        if scored_count is None:
+            metrics = self._metrics(self.count, *moments, "snr")
+        else:
+            metrics = self._metrics(self.count, *moments, "snr/nonzero_advantage")
+            metrics.update(self._metrics(scored_count, *moments, "snr/all_scored"))
         self.clear()
         return metrics
 

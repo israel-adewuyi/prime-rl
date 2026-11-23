@@ -1,0 +1,15 @@
+enable_fp32_lm_head = true
+enable_fp32_router_logits = true
+[server]
+host = "127.0.0.1"
+[env_vars]
+FLASH_ATTENTION_TRITON_AMD_ENABLE = "FALSE"
+[vllm]
+enforce_eager = true
+dtype = "bfloat16"
+tensor_parallel_size = 1
+data_parallel_size = 1
+max_model_len = 4096
+max_num_seqs = 256
+kv_cache_memory_bytes = 8589934592
+enable_prefix_caching = false

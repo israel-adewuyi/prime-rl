@@ -81,13 +81,13 @@ class InferenceClient:
         train_client_type: str = "openai_chat_completions",
         eval_client_type: str = "openai_chat_completions",
         renderer_config: RendererConfig | None = None,
+        renderer_model_name: str | None = None,
     ):
-        renderer_model_name = model_name if train_client_type == "renderer" else None
         self.train_client = setup_client(
             client_config,
             client_type=train_client_type,
             renderer_config=renderer_config,
-            renderer_model_name=renderer_model_name,
+            renderer_model_name=renderer_model_name or model_name,
         )
         self.eval_client = setup_client(client_config, client_type=eval_client_type)
         self._scorer = PrefillScorer()
